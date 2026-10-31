@@ -7,40 +7,44 @@ const INTERACTIONS_API_URL = 'https://generativelanguage.googleapis.com/v1beta/i
  * Calls the Gemini Interactions API (`v1beta/interactions`, `Api-Revision: 2026-05-20`)
  * with stateful multi-turn function calling (`previous_interaction_id` + `function_result` steps).
  */
-async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, userPrompt }) {
-  const historySteps = [
-    {
-      type: 'user_input',
-      content: [{ type: 'text', text: String(userPrompt || '') }]
-    }
-  ];
+async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, userPrompt, previousInteractionId, includeTools = true }) {
+  let input = userPrompt;
+  let previousId = previousInteractionId || undefined;
   const collectedToolCalls = [];
   const collectedThoughts = [];
   let finalOutputText = '';
-  let lastInteractionId = null;
-  let activeModel = model || 'gemini-3.8-flash';
+  let lastInteractionId = previousId;
+  let lockedModel = null;
   let maxTurns = 5;
 
   while (maxTurns-- > 0) {
-    const candidateModels = [
-      activeModel,
-      'gemini-3.8-flash',
-      'gemini-3.6-flash',
-      'gemini-3.5-flash',
-      'gemini-flash-lite-latest',
-      'gemma-4-26b-a4b-it'
-    ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
+    const candidateModels = lockedModel
+      ? [lockedModel]
+      : [
+          'gemini-3.6-flash',
+          'gemini-3.5-flash',
+          'gemini-flash-lite-latest',
+          model || 'gemini-3.8-flash',
+          'gemma-4-26b-a4b-it'
+        ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
 
     let interaction = null;
+    let activeModel = candidateModels[0];
     let lastErrorText = '';
 
     for (const candidate of candidateModels) {
+      activeModel = candidate;
       const body = {
         model: candidate,
-        input: historySteps,
-        system_instruction: systemInstruction,
-        tools: TOOL_DECLARATIONS
+        input,
+        system_instruction: systemInstruction
       };
+      if (includeTools) {
+        body.tools = TOOL_DECLARATIONS;
+      }
+      if (previousId) {
+        body.previous_interaction_id = previousId;
+      }
 
       const res = await fetch(INTERACTIONS_API_URL, {
         method: 'POST',
@@ -54,7 +58,7 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
 
       if (res.ok) {
         interaction = await res.json();
-        activeModel = candidate;
+        lockedModel = candidate;
         break;
       }
 
@@ -73,7 +77,6 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
     const functionResults = [];
 
     for (const step of steps) {
-      historySteps.push(step);
       if (step.type === 'thought' && Array.isArray(step.summary)) {
         for (const s of step.summary) {
           if (s.text) collectedThoughts.push(s.text);
@@ -87,14 +90,12 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
           arguments: args,
           result: toolResult
         });
-        const fnResStep = {
+        functionResults.push({
           type: 'function_result',
           name: step.name,
           call_id: step.id,
           result: [{ type: 'text', text: JSON.stringify(toolResult) }]
-        };
-        functionResults.push(fnResStep);
-        historySteps.push(fnResStep);
+        });
       } else if (step.type === 'model_output' && Array.isArray(step.content)) {
         for (const block of step.content) {
           if (block.type === 'text' && block.text) {
@@ -110,7 +111,7 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
 
     if (functionResults.length === 0) {
       return {
-        provider: `Gemini Interactions API (${activeModel})`,
+        provider: `Gemini Interactions API (${lockedModel || activeModel})`,
         interactionId: lastInteractionId,
         reply: finalOutputText || 'Done!',
         thoughts: collectedThoughts,
@@ -118,11 +119,13 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
       };
     }
 
+    input = functionResults;
+    previousId = interaction.id;
     finalOutputText = '';
   }
 
   return {
-    provider: `Gemini Interactions API (${activeModel})`,
+    provider: `Gemini Interactions API (${lockedModel || 'gemini-3.6-flash'})`,
     interactionId: lastInteractionId,
     reply: finalOutputText || 'Completed requested tool actions.',
     thoughts: collectedThoughts,
@@ -131,7 +134,7 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
 }
 
 /**
- * Generates a fresh, natural AI response using Gemini (if GEMINI_API_KEY is set)
+ * Generates a fresh, natural AI response using Gemini Interactions API (without tools, 1-shot)
  * or live OpenAI-compatible AI completion so Riz never repeats a rigid standard script.
  */
 async function callLiveAiWriter({ systemInstruction, userPrompt }) {
@@ -142,9 +145,10 @@ async function callLiveAiWriter({ systemInstruction, userPrompt }) {
     try {
       const res = await callGeminiInteractionsApi({
         apiKey,
-        model: (state.config && state.config.model) || 'gemini-3.8-flash',
+        model: 'gemini-3.6-flash',
         systemInstruction,
-        userPrompt
+        userPrompt,
+        includeTools: false
       });
       if (res && res.reply) return res.reply.trim();
     } catch (_) {}
@@ -484,9 +488,9 @@ async function processRizMessage({ message, sender = 'User', source = 'chat', pr
     (state.config && state.config.systemInstruction) ||
     'You are Riz, the personal AI assistant for Yazeed Abdullah (Yaz). Write every response naturally and use real tools.';
 
-  const contextualPrompt = `[Source: ${source} | Sender: ${sender}]\n${message}`;
-
-  if (apiKey) {
+  // Stateless keys (AQ.*) execute real tools locally and synthesize via 1-shot Gemini Interactions API
+  if (apiKey && !apiKey.startsWith('AQ.')) {
+    const contextualPrompt = `[Source: ${source} | Sender: ${sender}]\n${message}`;
     try {
       return await callGeminiInteractionsApi({
         apiKey,
@@ -495,11 +499,7 @@ async function processRizMessage({ message, sender = 'User', source = 'chat', pr
         userPrompt: contextualPrompt,
         previousInteractionId
       });
-    } catch (err) {
-      const fallback = await runRealToolAssistedAi(message, sender, conversationHistory);
-      fallback.provider = `${fallback.provider} (Gemini API note: ${err.message.slice(0, 80)})`;
-      return fallback;
-    }
+    } catch (_) {}
   }
 
   return await runRealToolAssistedAi(message, sender, conversationHistory);
