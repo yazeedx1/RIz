@@ -185,7 +185,11 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
     }
 
     // Mode B: 8-Digit Phone Pairing Code mode (wait until `qr` event fires, which guarantees noise handshake is ready!)
-    if (cleanPhone && !sock.authState.creds.registered && !pairingRequested && qr) {
+    const isAlreadyLinked = Boolean(
+      (state && state.creds && (state.creds.registered || state.creds.me)) ||
+        (sock.authState && sock.authState.creds && (sock.authState.creds.registered || sock.authState.creds.me))
+    );
+    if (cleanPhone && !isAlreadyLinked && !pairingRequested && qr) {
       pairingRequested = true;
       try {
         const code = await sock.requestPairingCode(cleanPhone);
@@ -234,12 +238,13 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
         return;
       }
 
-      if (sock.authState.creds.registered && statusCode !== DisconnectReason.loggedOut) {
+      if (isAlreadyLinked && statusCode !== DisconnectReason.loggedOut) {
+        console.log(`🔄 [Riz WhatsApp Bridge] Connection dropped (${errMsg}), auto-reconnecting in 2s...`);
         setTimeout(() => {
           if (sessionId === currentSessionId) {
             startLiveWhatsAppBridge({ phoneNumber: '', resetAuth: false }).catch(() => {});
           }
-        }, 2500);
+        }, 2000);
         return;
       }
 
@@ -256,10 +261,17 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
 
   sock.ev.on('messages.upsert', async (event) => {
     if (sessionId !== currentSessionId) return;
-    if (event.type !== 'notify') return;
+    if (event.type !== 'notify' && event.type !== 'append') return;
     for (const msg of event.messages || []) {
       if (!msg.message || !msg.key) continue;
       if (sentByRizIds.has(msg.key.id)) continue;
+
+      // For 'append' (history sync after reconnect), only process recent messages (< 10 min old) not sent by Riz
+      if (event.type === 'append') {
+        const tsSec = Number(msg.messageTimestamp || 0);
+        if (!tsSec || Date.now() - tsSec * 1000 > 10 * 60 * 1000) continue;
+      }
+      sentByRizIds.add(msg.key.id);
 
       const remoteJid = msg.key.remoteJid || '';
       if (remoteJid === 'status@broadcast') continue;
@@ -367,8 +379,16 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
 
       try {
         const callerJid = call.from;
+        let publicCallUrl = 'http://localhost:3456/call';
+        try {
+          const urlFile = path.join(__dirname, '..', 'data', 'public-call-url.json');
+          if (fs.existsSync(urlFile)) {
+            const parsed = JSON.parse(fs.readFileSync(urlFile, 'utf8'));
+            if (parsed && parsed.callUrl) publicCallUrl = parsed.callUrl;
+          }
+        } catch (_) {}
         const callGreeting =
-          "Hey! It's Riz, Yazeed's AI assistant. Talk to me right here on WhatsApp by sending a Voice Note, or open http://localhost:3456/call for a live hands-free voice call!";
+          `Hey! It's Riz, Yazeed's AI assistant. Talk to me right here on WhatsApp by sending a Voice Note, or tap ${publicCallUrl} for a live hands-free voice call!`;
         await sock.sendMessage(callerJid, { text: callGreeting });
         const mp3Buffer = await synthesizeSpeechMp3(callGreeting);
         if (mp3Buffer && mp3Buffer.length > 0) {
@@ -385,19 +405,34 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
   return getBridgeStatus();
 }
 
+let watchdogStarted = false;
+
 function autoConnectIfRegistered() {
-  try {
-    const credsFile = path.join(SESSION_DIR, 'creds.json');
-    if (fs.existsSync(credsFile)) {
-      const credsData = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
-      if (credsData && (credsData.registered || credsData.me)) {
-        console.log('🔄 [Riz WhatsApp Bridge] Found existing linked WhatsApp session, auto-connecting...');
-        startLiveWhatsAppBridge({ phoneNumber: '', resetAuth: false }).catch((err) => {
-          console.error('[Riz Auto-Connect Error]:', err.message);
-        });
+  const tryConnect = () => {
+    try {
+      const credsFile = path.join(SESSION_DIR, 'creds.json');
+      if (fs.existsSync(credsFile)) {
+        const credsData = JSON.parse(fs.readFileSync(credsFile, 'utf8'));
+        if (credsData && (credsData.registered || credsData.me)) {
+          console.log('🔄 [Riz WhatsApp Bridge] Found existing linked WhatsApp session, auto-connecting...');
+          startLiveWhatsAppBridge({ phoneNumber: '', resetAuth: false }).catch((err) => {
+            console.error('[Riz Auto-Connect Error]:', err.message);
+          });
+        }
       }
-    }
-  } catch (_) {}
+    } catch (_) {}
+  };
+
+  tryConnect();
+
+  if (!watchdogStarted) {
+    watchdogStarted = true;
+    setInterval(() => {
+      if (bridgeStatus.state === 'error' || bridgeStatus.state === 'disconnected') {
+        tryConnect();
+      }
+    }, 12000);
+  }
 }
 
 module.exports = {

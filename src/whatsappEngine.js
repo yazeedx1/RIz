@@ -1,10 +1,15 @@
+const fs = require('fs');
+const path = require('path');
 const { loadState, addWhatsappLog } = require('./configStore');
 const { processRizMessage, generateDynamicSecurityReply } = require('./rizBrain');
 
+const SESSIONS_FILE = path.join(__dirname, '..', 'data', 'wa-sessions.json');
+
 /**
- * Per-chat session map:
+ * Per-chat session map persisted across restarts so unlocked conversations never get reset:
  * key -> {
  *   state: 'locked' | 'awaiting_password' | 'unlocked',
+ *   voiceMode: boolean,
  *   pendingQuestion: string | null,
  *   previousInteractionId: string | null,
  *   history: Array<{ role: string, text: string }>,
@@ -13,20 +18,76 @@ const { processRizMessage, generateDynamicSecurityReply } = require('./rizBrain'
  */
 const chatSessions = new Map();
 
+function saveSessionsToDisk() {
+  try {
+    const obj = {};
+    for (const [k, v] of chatSessions.entries()) {
+      obj[k] = v;
+    }
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2), 'utf8');
+  } catch (_) {}
+}
+
+function hydrateSessionsFromDisk() {
+  try {
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const raw = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      for (const [k, v] of Object.entries(raw || {})) {
+        chatSessions.set(k, v);
+      }
+    }
+    // Also restore any previously unlocked senders from whatsappLogs
+    const state = loadState();
+    for (const log of state.whatsappLogs || []) {
+      if (
+        log &&
+        log.senderPhone &&
+        (log.matchedTrigger === 'Open Conversation (Unlocked)' ||
+          log.matchedTrigger === 'Password Accepted ("blacky")')
+      ) {
+        const lidKey = `${log.senderPhone}@lid`.toLowerCase();
+        const sKey = `${log.senderPhone}@s.whatsapp.net`.toLowerCase();
+        const rawKey = String(log.senderPhone).toLowerCase();
+        for (const k of [lidKey, sKey, rawKey]) {
+          if (!chatSessions.has(k)) {
+            chatSessions.set(k, {
+              state: 'unlocked',
+              voiceMode: false,
+              pendingQuestion: null,
+              previousInteractionId: null,
+              history: [],
+              updatedAt: Date.now()
+            });
+          }
+        }
+      }
+    }
+  } catch (_) {}
+}
+
+hydrateSessionsFromDisk();
+
 function getSessionKey({ chatId, senderPhone, chatName }) {
   return String(chatId || senderPhone || chatName || 'default-chat').toLowerCase().trim();
 }
 
-function getOrCreateSession(sessionKey) {
+function getOrCreateSession(sessionKey, senderPhone = '') {
   if (!chatSessions.has(sessionKey)) {
+    const cleanPhone = String(senderPhone || '').replace(/[^\d]/g, '');
+    const isOwnerDirect =
+      cleanPhone === '56264205852682' ||
+      cleanPhone === '966555110550' ||
+      sessionKey.includes('56264205852682') ||
+      sessionKey.includes('966555110550');
     chatSessions.set(sessionKey, {
-      state: 'locked',
+      state: isOwnerDirect ? 'unlocked' : 'locked',
       voiceMode: false,
       pendingQuestion: null,
       previousInteractionId: null,
       history: [],
       updatedAt: Date.now()
     });
+    saveSessionsToDisk();
   }
   return chatSessions.get(sessionKey);
 }
@@ -41,6 +102,7 @@ function getAllSessions() {
 
 function resetAllSessions() {
   chatSessions.clear();
+  saveSessionsToDisk();
 }
 
 /**
@@ -154,15 +216,17 @@ async function handleIncomingWhatsAppMessage({
   const requirePassword = config.requirePasswordForOpenChat !== false;
 
   const sessionKey = getSessionKey({ chatId, senderPhone, chatName });
-  const session = getOrCreateSession(sessionKey);
+  const session = getOrCreateSession(sessionKey, senderPhone);
   const textTrimmed = String(messageText || '').trim();
   const textLower = textTrimmed.toLowerCase();
 
   // Check if user toggled voice mode on or off
   if (/\b(?:voice\s+mode\s+on|enable\s+voice|switch\s+to\s+voice|voice\s+chat\s+on)\b/i.test(textTrimmed)) {
     session.voiceMode = true;
+    saveSessionsToDisk();
   } else if (/\b(?:voice\s+mode\s+off|disable\s+voice|text\s+only|text\s+mode)\b/i.test(textTrimmed)) {
     session.voiceMode = false;
+    saveSessionsToDisk();
   }
 
   const wantsVoiceThisTurn =
@@ -188,6 +252,7 @@ async function handleIncomingWhatsAppMessage({
     session.previousInteractionId = null;
     session.history = [];
     session.updatedAt = Date.now();
+    saveSessionsToDisk();
 
     const lockReply = await generateDynamicSecurityReply({
       eventType: 'session_locked',
@@ -228,6 +293,7 @@ async function handleIncomingWhatsAppMessage({
     if (pwdRegex.test(textTrimmed)) {
       session.state = 'unlocked';
       session.updatedAt = Date.now();
+      saveSessionsToDisk();
 
       const remainderAfterPwd = textTrimmed
         .replace(new RegExp(`^(?:password\\s+is\\s+|it's\\s+|it\\s+is\\s+)?${escapedPwd}[,:.!?\\s]*`, 'i'), '')
