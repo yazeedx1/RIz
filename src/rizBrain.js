@@ -475,6 +475,13 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     }
   }
 
+  // 3d. Live Voice Call / Phone Call requests (KSA-compatible HTTPS Voice Call Room)
+  if (/\b(?:call|calling|phone\s+call|voice\s+call|talk\s+to\s+you|speak\s+with\s+you)\b/i.test(userMessage)) {
+    thoughts.push('Generating KSA-compatible HTTPS Live Voice Call Room link via start_live_voice_call.');
+    const callRes = await executeTool('start_live_voice_call', {});
+    toolCalls.push({ name: 'start_live_voice_call', arguments: {}, result: callRes });
+  }
+
   // 4. Calendar creation intent
   if (
     /\b(?:schedule\s+a|schedule\s+an|add\s+a|add\s+event|add\s+meeting|create\s+a|book\s+a|set\s+a\s+meeting)\b/i.test(

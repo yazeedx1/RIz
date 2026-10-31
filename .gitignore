@@ -5,6 +5,7 @@ data/gcal-homes/
 data/gmail-tokens/
 data/netlify-token.json
 data/netlify-pending-ticket.json
+data/public-call-url.json
 data/riz-store.json
 npm-debug.log
 .DS_Store
