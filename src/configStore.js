@@ -44,8 +44,13 @@ const DEFAULT_STATE = {
     requirePasswordForOpenChat: true,
     model: 'gemini-3.8-flash',
     geminiApiKey: process.env.GEMINI_API_KEY || envVars.GEMINI_API_KEY || '',
-    githubUsername: process.env.GITHUB_USERNAME || envVars.GITHUB_USERNAME || '',
+    githubUsername: process.env.GITHUB_USERNAME || envVars.GITHUB_USERNAME || 'yazeedx1',
     githubToken: process.env.GITHUB_TOKEN || envVars.GITHUB_TOKEN || '',
+    firebaseProjectId: process.env.FIREBASE_PROJECT_ID || envVars.FIREBASE_PROJECT_ID || 'rizproject-e6d13',
+    firebaseDatabaseUrl:
+      process.env.FIREBASE_DATABASE_URL ||
+      envVars.FIREBASE_DATABASE_URL ||
+      'https://rizproject-e6d13-default-rtdb.firebaseio.com',
     whatsappEnabled: true,
     replyInGroups: true,
     replyInDMs: true,
@@ -212,9 +217,29 @@ function loadState() {
   }
 }
 
+function syncToFirebaseAsync(state) {
+  const dbUrl =
+    (state.config && state.config.firebaseDatabaseUrl) ||
+    'https://rizproject-e6d13-default-rtdb.firebaseio.com';
+  const payload = {
+    ownerProfile: state.ownerProfile,
+    calendarEvents: state.calendarEvents,
+    tasks: state.tasks,
+    notes: state.notes,
+    emails: state.emails,
+    updatedAt: new Date().toISOString()
+  };
+  fetch(`${dbUrl.replace(/\/$/, '')}/riz_state.json`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  }).catch(() => {});
+}
+
 function saveState(state) {
   ensureDataDir();
   fs.writeFileSync(STORE_PATH, JSON.stringify(state, null, 2), 'utf8');
+  syncToFirebaseAsync(state);
   return state;
 }
 
