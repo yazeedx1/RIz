@@ -311,11 +311,20 @@ const GCAL_HOMES = [
   '/home/droid'
 ];
 
+const gcalCacheByDateKey = new Map();
+const GCAL_CACHE_TTL_MS = 60 * 1000;
+
 /**
  * Queries real Google Calendar events across all connected Google Calendar accounts
- * and sub-calendars via the official gcalendar CLI.
+ * and sub-calendars via the official gcalendar CLI, with a 60s in-memory cache for 0ms reads.
  */
-function fetchRealGoogleCalendarEvents(dateStr) {
+function fetchRealGoogleCalendarEvents(dateStr, forceRefresh = false) {
+  const cacheKey = dateStr || '__ALL__';
+  const cached = gcalCacheByDateKey.get(cacheKey);
+  if (!forceRefresh && cached && Date.now() - cached.fetchedAt < GCAL_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
   if (!fs.existsSync(GCALENDAR_SCRIPT)) {
     return { connected: false, events: [], authNote: 'gcalendar CLI script not found' };
   }
@@ -402,13 +411,23 @@ function fetchRealGoogleCalendarEvents(dateStr) {
     };
   }
 
-  return {
+  const result = {
     connected: true,
     accounts: connectedProfiles,
     events: allNormalized,
     authNote: null
   };
+  gcalCacheByDateKey.set(cacheKey, { fetchedAt: Date.now(), data: result });
+  return result;
 }
+
+// Pre-warm Google Calendar cache on startup in background so first calendar question is instant
+setTimeout(() => {
+  try {
+    fetchRealGoogleCalendarEvents(undefined);
+    fetchRealGoogleCalendarEvents(new Date().toISOString().slice(0, 10));
+  } catch (_) {}
+}, 300);
 
 async function executeTool(name, args = {}) {
   const state = loadState();
@@ -500,6 +519,7 @@ async function executeTool(name, args = {}) {
           );
           const linkMatch = String(out).match(/https:\/\/\S+/);
           if (linkMatch) gcalCreatedLink = linkMatch[0];
+          gcalCacheByDateKey.clear();
         } catch (_) {}
       }
 

@@ -15,6 +15,7 @@ if (!module.paths.includes(EXT4_NODE_MODULES)) {
 }
 
 const { handleIncomingWhatsAppMessage } = require('./whatsappEngine');
+const { transcribeAudioWithGemini, synthesizeSpeechMp3 } = require('./voiceEngine');
 
 const LOCAL_CACHE_WA_AUTH = path.join(
   os.homedir(),
@@ -260,17 +261,51 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
       if (!msg.message || !msg.key) continue;
       if (sentByRizIds.has(msg.key.id)) continue;
 
-      const text =
-        msg.message.conversation ||
-        (msg.message.extendedTextMessage && msg.message.extendedTextMessage.text) ||
-        '';
-      if (!text || text.startsWith('🤖 *Riz:*')) continue;
-
       const remoteJid = msg.key.remoteJid || '';
       if (remoteJid === 'status@broadcast') continue;
 
+      const innerMsg =
+        (msg.message.ephemeralMessage && msg.message.ephemeralMessage.message) ||
+        (msg.message.viewOnceMessage && msg.message.viewOnceMessage.message) ||
+        msg.message;
+
+      const audioMsg = innerMsg.audioMessage || null;
+      let isVoiceMessage = false;
+      let text =
+        innerMsg.conversation ||
+        (innerMsg.extendedTextMessage && innerMsg.extendedTextMessage.text) ||
+        '';
+
+      if (audioMsg && !text) {
+        isVoiceMessage = true;
+        try {
+          await sock.sendPresenceUpdate('recording', remoteJid).catch(() => {});
+          const downloadMediaMessage = baileys.downloadMediaMessage;
+          if (typeof downloadMediaMessage === 'function') {
+            const audioBuffer = await downloadMediaMessage(
+              msg,
+              'buffer',
+              {},
+              { logger: pinoLogger, reuploadRequest: sock.updateMediaMessage }
+            );
+            text = await transcribeAudioWithGemini({
+              audioBuffer,
+              mimeType: audioMsg.mimetype || 'audio/ogg'
+            });
+            console.log(`🎙️ [Riz WhatsApp Voice Transcript]: "${text}"`);
+          }
+        } catch (err) {
+          console.error('[Riz Voice Note Download/Transcribe Error]:', err.message);
+        }
+      }
+
+      if (!text || text.startsWith('🤖 *Riz:*')) continue;
+
       const isGroup = remoteJid.endsWith('@g.us');
       const senderName = msg.pushName || (msg.key.participant || remoteJid).split('@')[0] || 'WhatsApp User';
+
+      // Show immediate typing/recording indicator so user sees instant feedback
+      sock.sendPresenceUpdate(isVoiceMessage ? 'recording' : 'composing', remoteJid).catch(() => {});
 
       const result = await handleIncomingWhatsAppMessage({
         chatId: remoteJid,
@@ -278,10 +313,12 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
         senderPhone: (msg.key.participant || remoteJid).split('@')[0],
         chatName: isGroup ? 'WhatsApp Group' : senderName,
         chatType: isGroup ? 'group' : 'dm',
-        messageText: text
+        messageText: text,
+        isVoiceMessage
       });
 
       if (result.triggered && result.reply) {
+        // Send text reply immediately for fast readability
         const sent = await sock.sendMessage(
           remoteJid,
           { text: result.reply },
@@ -290,6 +327,31 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
         if (sent && sent.key && sent.key.id) {
           sentByRizIds.add(sent.key.id);
         }
+
+        // If caller sent a voice note or voice mode is active, also send a spoken voice note!
+        if (result.sendVoiceReply) {
+          try {
+            await sock.sendPresenceUpdate('recording', remoteJid).catch(() => {});
+            const mp3Buffer = await synthesizeSpeechMp3(result.reply);
+            if (mp3Buffer && mp3Buffer.length > 0) {
+              const sentAudio = await sock.sendMessage(
+                remoteJid,
+                {
+                  audio: mp3Buffer,
+                  mimetype: 'audio/mpeg',
+                  ptt: true
+                },
+                { quoted: msg }
+              );
+              if (sentAudio && sentAudio.key && sentAudio.key.id) {
+                sentByRizIds.add(sentAudio.key.id);
+              }
+            }
+          } catch (voiceErr) {
+            console.error('[Riz Voice Reply Send Error]:', voiceErr.message);
+          }
+        }
+        sock.sendPresenceUpdate('paused', remoteJid).catch(() => {});
       }
     }
   });

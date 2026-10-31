@@ -115,7 +115,8 @@
 
             <form id="waSimulateForm" class="wa-input-bar">
               <input type="text" id="waSenderInput" class="wa-sender" value="Alex" title="Sender Name" placeholder="Sender" />
-              <input type="text" id="waMessageInput" class="wa-text-input" placeholder='Simulate incoming WhatsApp message (mention "Riz" to trigger reply)...' required />
+              <input type="text" id="waMessageInput" class="wa-text-input" placeholder='Simulate incoming WhatsApp message (mention "Riz" or click 🎙️)...' required />
+              <button type="button" id="waVoiceBtn" class="btn btn-outline" title="Record & Send Voice Note to Riz">🎙️ Voice</button>
               <button type="submit" class="btn btn-wa">Send</button>
             </form>
           </div>
@@ -170,18 +171,27 @@
         </div>
       </section>
 
-      <!-- TAB 4: DIRECT CHAT WITH RIZ -->
+      <!-- TAB 4: DIRECT & VOICE CHAT WITH RIZ -->
       <section class="tab-panel" id="tab-chat">
         <header class="panel-header">
           <div>
-            <h2>Direct Owner Chat with Riz</h2>
-            <p>Talk directly to Riz without needing a trigger word and inspect the Gemini Interactions API steps and tool calls.</p>
+            <h2>Direct & Live Voice Chat with Riz</h2>
+            <p>Talk to Riz by voice or text—or send a voice note directly on WhatsApp! Riz transcribes your voice with Gemini and speaks back naturally.</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <span id="voiceStatusBadge" class="badge" style="color:#86efac;">🎙️ Voice Ready</span>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" id="autoSpeakToggle" checked />
+              🔊 Auto-Speak Replies
+            </label>
+            <button type="button" id="handsFreeCallBtn" class="btn btn-outline">📞 Start Hands-Free Voice Call</button>
           </div>
         </header>
         <div class="card direct-chat-card">
           <div id="directChatStream" class="direct-chat-stream"></div>
           <form id="directChatForm" class="direct-chat-form">
-            <input type="text" id="directChatInput" placeholder="Ask Riz to check your accounts, schedule an event, draft an email, or launch an app..." required />
+            <input type="text" id="directChatInput" placeholder="Type a message or click 🎙️ Speak to talk with Riz..." required />
+            <button type="button" id="directVoiceBtn" class="btn btn-outline" style="min-width:120px;">🎙️ Speak</button>
             <button type="submit" class="btn btn-primary">Ask Riz</button>
           </form>
         </div>

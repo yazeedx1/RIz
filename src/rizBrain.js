@@ -2,10 +2,12 @@ const { loadState } = require('./configStore');
 const { TOOL_DECLARATIONS, executeTool } = require('./tools');
 
 const INTERACTIONS_API_URL = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+const modelCooldownUntil = new Map();
 
 /**
  * Calls the Gemini Interactions API (`v1beta/interactions`, `Api-Revision: 2026-05-20`)
- * with stateful multi-turn function calling (`previous_interaction_id` + `function_result` steps).
+ * with minimal thinking latency (`generation_config.thinking_level = "minimal"`) and
+ * automatic 429/503 cooldown caching for fast sub-3s responses.
  */
 async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, userPrompt, previousInteractionId, includeTools = true }) {
   let input = userPrompt;
@@ -18,15 +20,19 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
   let maxTurns = 5;
 
   while (maxTurns-- > 0) {
-    const candidateModels = lockedModel
+    const now = Date.now();
+    const rawCandidates = lockedModel
       ? [lockedModel]
       : [
+          'gemini-flash-lite-latest',
           'gemini-3.6-flash',
           'gemini-3.5-flash',
-          'gemini-flash-lite-latest',
           model || 'gemini-3.8-flash',
           'gemma-4-26b-a4b-it'
         ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
+
+    const activeCandidates = rawCandidates.filter((m) => (modelCooldownUntil.get(m) || 0) < now);
+    const candidateModels = activeCandidates.length > 0 ? activeCandidates : rawCandidates;
 
     let interaction = null;
     let activeModel = candidateModels[0];
@@ -39,6 +45,11 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
         input,
         system_instruction: systemInstruction
       };
+      if (candidate.startsWith('gemini-')) {
+        body.generation_config = {
+          thinking_level: 'minimal'
+        };
+      }
       if (includeTools) {
         body.tools = TOOL_DECLARATIONS;
       }
@@ -63,6 +74,10 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
       }
 
       lastErrorText = await res.text();
+      if (res.status === 429 || res.status === 503) {
+        // Remember rate limit / high demand for 90 seconds so subsequent messages skip it immediately
+        modelCooldownUntil.set(candidate, Date.now() + 90 * 1000);
+      }
       if (res.status !== 503 && res.status !== 429 && res.status !== 404) {
         break;
       }
@@ -125,7 +140,7 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
   }
 
   return {
-    provider: `Gemini Interactions API (${lockedModel || 'gemini-3.6-flash'})`,
+    provider: `Gemini Interactions API (${lockedModel || 'gemini-flash-lite-latest'})`,
     interactionId: lastInteractionId,
     reply: finalOutputText || 'Completed requested tool actions.',
     thoughts: collectedThoughts,
@@ -145,7 +160,7 @@ async function callLiveAiWriter({ systemInstruction, userPrompt }) {
     try {
       const res = await callGeminiInteractionsApi({
         apiKey,
-        model: 'gemini-3.6-flash',
+        model: 'gemini-flash-lite-latest',
         systemInstruction,
         userPrompt,
         includeTools: false

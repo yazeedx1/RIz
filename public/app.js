@@ -227,15 +227,85 @@ function populateSettingsForm() {
   }
 }
 
-// WhatsApp Simulator Submit
-async function sendSimulatedWhatsAppMessage(senderName, messageText) {
-  const chatType = document.getElementById('waChatTypeSelect').value;
-  appendWaBubble({
-    sender: senderName,
-    text: messageText,
-    isRiz: false,
-    statusNote: `Incoming WhatsApp (${chatType.toUpperCase()})`
+let currentAudioPlayer = null;
+let handsFreeActive = false;
+let activeMediaRecorder = null;
+let activeMediaStream = null;
+
+function setVoiceBadge(text, color = '#86efac') {
+  const badge = document.getElementById('voiceStatusBadge');
+  if (badge) {
+    badge.textContent = text;
+    badge.style.color = color;
+  }
+}
+
+window.speakTextNow = async function (text) {
+  if (!text) return;
+  try {
+    setVoiceBadge('🔊 Generating voice...', '#38bdf8');
+    const res = await fetch('/api/voice/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const data = await res.json();
+    if (data && data.audioBase64) {
+      await playRizAudio(data.audioBase64, text);
+    }
+  } catch (_) {}
+};
+
+function playRizAudio(audioBase64, fallbackText = '') {
+  return new Promise((resolve) => {
+    if (currentAudioPlayer) {
+      try {
+        currentAudioPlayer.pause();
+      } catch (_) {}
+      currentAudioPlayer = null;
+    }
+
+    if (audioBase64) {
+      const audio = new Audio(`data:audio/mpeg;base64,${audioBase64}`);
+      currentAudioPlayer = audio;
+      setVoiceBadge('🔊 Riz is speaking...', '#38bdf8');
+      audio.onended = () => {
+        setVoiceBadge(handsFreeActive ? '📞 Hands-Free Active' : '🎙️ Voice Ready', '#86efac');
+        resolve();
+      };
+      audio.onerror = () => {
+        setVoiceBadge('🎙️ Voice Ready', '#86efac');
+        resolve();
+      };
+      audio.play().catch(() => {
+        setVoiceBadge('🎙️ Voice Ready', '#86efac');
+        resolve();
+      });
+      return;
+    }
+
+    if ('speechSynthesis' in window && fallbackText) {
+      const utter = new SpeechSynthesisUtterance(fallbackText);
+      utter.onend = () => resolve();
+      utter.onerror = () => resolve();
+      window.speechSynthesis.speak(utter);
+    } else {
+      resolve();
+    }
   });
+}
+
+// WhatsApp Simulator Submit
+async function sendSimulatedWhatsAppMessage(senderName, messageText, audioPayload = null) {
+  const chatType = document.getElementById('waChatTypeSelect').value;
+  if (messageText) {
+    appendWaBubble({
+      sender: senderName,
+      text: messageText,
+      isRiz: false,
+      statusNote: `Incoming WhatsApp (${chatType.toUpperCase()})`
+    });
+  }
 
   const res = await fetch('/api/whatsapp/incoming', {
     method: 'POST',
@@ -244,10 +314,23 @@ async function sendSimulatedWhatsAppMessage(senderName, messageText) {
       senderName,
       chatName: chatType === 'group' ? 'Friends & Work Group' : senderName,
       chatType,
-      messageText
+      messageText: messageText || '',
+      audioBase64: audioPayload ? audioPayload.audioBase64 : undefined,
+      mimeType: audioPayload ? audioPayload.mimeType : undefined,
+      isVoiceMessage: Boolean(audioPayload),
+      withVoice: Boolean(audioPayload)
     })
   });
   const data = await res.json();
+
+  if (audioPayload && data.transcribedText) {
+    appendWaBubble({
+      sender: `${senderName} (🎙️ Voice Note)`,
+      text: data.transcribedText,
+      isRiz: false,
+      statusNote: `Transcribed WhatsApp Voice Note (${chatType.toUpperCase()})`
+    });
+  }
 
   if (data.triggered && data.reply) {
     const toolNames = (data.toolCalls || []).map((t) => t.name).join(', ');
@@ -258,6 +341,9 @@ async function sendSimulatedWhatsAppMessage(senderName, messageText) {
       statusNote: toolNames ? `Tools used: ${toolNames}` : `State: ${data.sessionState || 'active'}`,
       waDeepLink: data.waDeepLink
     });
+    if (data.audioBase64) {
+      await playRizAudio(data.audioBase64, data.reply);
+    }
   } else {
     appendWaBubble({
       sender: '🔇 Riz Filter',
@@ -288,6 +374,39 @@ document.querySelectorAll('.chip').forEach((chip) => {
   });
 });
 
+function appendDirectChatTurn({ userText, data, isVoice = false }) {
+  const stream = document.getElementById('directChatStream');
+  if (userText) {
+    const userDiv = document.createElement('div');
+    userDiv.className = 'list-row';
+    userDiv.innerHTML = `<strong>${isVoice ? '🎙️ You (Voice):' : 'You:'}</strong> ${escapeHtml(userText)}`;
+    stream.appendChild(userDiv);
+  }
+
+  if (data && data.reply) {
+    const rizDiv = document.createElement('div');
+    rizDiv.className = 'list-row';
+    rizDiv.style.borderLeft = '3px solid var(--accent)';
+    const toolsBadges = (data.toolCalls || [])
+      .map((t) => `<span class="tool-pill">⚡ ${escapeHtml(t.name)}</span>`)
+      .join('');
+    const encodedReply = encodeURIComponent(data.reply);
+    rizDiv.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <strong>🤖 Riz:</strong>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="button" class="btn btn-outline" style="padding:3px 8px;font-size:11px;" onclick="speakTextNow(decodeURIComponent('${encodedReply}'))">🔊 Speak</button>
+          <span style="font-size:11px;color:var(--muted);">${escapeHtml(data.provider || '')}</span>
+        </div>
+      </div>
+      <div style="margin-top:6px;white-space:pre-wrap;">${escapeHtml(data.reply)}</div>
+      ${toolsBadges ? `<div style="margin-top:6px;">${toolsBadges}</div>` : ''}
+    `;
+    stream.appendChild(rizDiv);
+    stream.scrollTop = stream.scrollHeight;
+  }
+}
+
 // Direct Chat with Riz
 document.getElementById('directChatForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -296,6 +415,7 @@ document.getElementById('directChatForm').addEventListener('submit', async (e) =
   if (!text) return;
   input.value = '';
 
+  const autoSpeak = document.getElementById('autoSpeakToggle') && document.getElementById('autoSpeakToggle').checked;
   const stream = document.getElementById('directChatStream');
   const userDiv = document.createElement('div');
   userDiv.className = 'list-row';
@@ -305,28 +425,187 @@ document.getElementById('directChatForm').addEventListener('submit', async (e) =
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: text, sender: 'Owner' })
+    body: JSON.stringify({ message: text, sender: 'Owner', withVoice: autoSpeak })
   });
   const data = await res.json();
 
-  const rizDiv = document.createElement('div');
-  rizDiv.className = 'list-row';
-  rizDiv.style.borderLeft = '3px solid var(--accent)';
-  const toolsBadges = (data.toolCalls || [])
-    .map((t) => `<span class="tool-pill">⚡ ${escapeHtml(t.name)}</span>`)
-    .join('');
-  rizDiv.innerHTML = `
-    <div style="display:flex;justify-content:space-between;">
-      <strong>🤖 Riz:</strong>
-      <span style="font-size:11px;color:var(--muted);">${escapeHtml(data.provider || '')}</span>
-    </div>
-    <div style="margin-top:6px;white-space:pre-wrap;">${escapeHtml(data.reply)}</div>
-    ${toolsBadges ? `<div style="margin-top:6px;">${toolsBadges}</div>` : ''}
-  `;
-  stream.appendChild(rizDiv);
-  stream.scrollTop = stream.scrollHeight;
+  appendDirectChatTurn({ userText: null, data, isVoice: false });
+  if (autoSpeak && data.audioBase64) {
+    await playRizAudio(data.audioBase64, data.reply);
+  }
   await fetchState();
 });
+
+/**
+ * Records microphone audio and sends it to Riz's Gemini Multimodal Voice Engine.
+ */
+async function toggleMicRecording({ buttonEl, onAudioCaptured }) {
+  if (activeMediaRecorder && activeMediaRecorder.state === 'recording') {
+    activeMediaRecorder.stop();
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    activeMediaStream = stream;
+    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus'
+      : MediaRecorder.isTypeSupported('audio/mp4')
+      ? 'audio/mp4'
+      : '';
+    const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    activeMediaRecorder = recorder;
+    const chunks = [];
+
+    const origText = buttonEl.textContent;
+    buttonEl.textContent = '⏹️ Stop & Send';
+    buttonEl.style.borderColor = '#f87171';
+    buttonEl.style.color = '#f87171';
+    setVoiceBadge('🔴 Listening... (click Stop when done)', '#f87171');
+
+    recorder.ondataavailable = (ev) => {
+      if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+    };
+
+    recorder.onstop = async () => {
+      buttonEl.textContent = origText;
+      buttonEl.style.borderColor = '';
+      buttonEl.style.color = '';
+      stream.getTracks().forEach((t) => t.stop());
+      activeMediaRecorder = null;
+      activeMediaStream = null;
+
+      if (chunks.length === 0) {
+        setVoiceBadge('🎙️ Voice Ready', '#86efac');
+        return;
+      }
+
+      setVoiceBadge('⚡ Gemini transcribing & thinking...', '#f59e0b');
+      const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64 = String(reader.result || '').split(',')[1] || '';
+        await onAudioCaptured({
+          audioBase64: base64,
+          mimeType: (recorder.mimeType || 'audio/webm').split(';')[0]
+        });
+      };
+      reader.readAsDataURL(blob);
+    };
+
+    recorder.start();
+  } catch (err) {
+    setVoiceBadge('⚠️ Mic permission needed', '#f87171');
+    alert('Microphone access is needed for Voice Chat: ' + err.message);
+  }
+}
+
+const directVoiceBtn = document.getElementById('directVoiceBtn');
+if (directVoiceBtn) {
+  directVoiceBtn.addEventListener('click', () => {
+    toggleMicRecording({
+      buttonEl: directVoiceBtn,
+      onAudioCaptured: async ({ audioBase64, mimeType }) => {
+        const res = await fetch('/api/voice/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ audioBase64, mimeType, sender: 'Owner' })
+        });
+        const data = await res.json();
+        if (data.error) {
+          setVoiceBadge('⚠️ ' + data.error, '#f87171');
+          return;
+        }
+        appendDirectChatTurn({
+          userText: data.transcript || '(Voice message)',
+          data,
+          isVoice: true
+        });
+        if (data.audioBase64) {
+          await playRizAudio(data.audioBase64, data.reply);
+        } else {
+          setVoiceBadge('🎙️ Voice Ready', '#86efac');
+        }
+        await fetchState();
+      }
+    });
+  });
+}
+
+const waVoiceBtn = document.getElementById('waVoiceBtn');
+if (waVoiceBtn) {
+  waVoiceBtn.addEventListener('click', () => {
+    const sender = document.getElementById('waSenderInput').value.trim() || 'Alex';
+    toggleMicRecording({
+      buttonEl: waVoiceBtn,
+      onAudioCaptured: async ({ audioBase64, mimeType }) => {
+        await sendSimulatedWhatsAppMessage(sender, '', { audioBase64, mimeType });
+      }
+    });
+  });
+}
+
+// Hands-Free Continuous Voice Call Mode
+const handsFreeCallBtn = document.getElementById('handsFreeCallBtn');
+if (handsFreeCallBtn) {
+  handsFreeCallBtn.addEventListener('click', async () => {
+    handsFreeActive = !handsFreeActive;
+    if (!handsFreeActive) {
+      handsFreeCallBtn.textContent = '📞 Start Hands-Free Voice Call';
+      handsFreeCallBtn.style.borderColor = '';
+      if (activeMediaRecorder && activeMediaRecorder.state === 'recording') {
+        activeMediaRecorder.stop();
+      }
+      setVoiceBadge('🎙️ Voice Ready', '#86efac');
+      return;
+    }
+
+    handsFreeCallBtn.textContent = '🔴 End Hands-Free Call';
+    handsFreeCallBtn.style.borderColor = '#f87171';
+    setVoiceBadge('📞 Hands-Free Call Active — Speak now!', '#86efac');
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRec) {
+      const rec = new SpeechRec();
+      rec.lang = 'en-US';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.onresult = async (ev) => {
+        const transcript = ev.results[0][0].transcript;
+        if (!transcript) return;
+        setVoiceBadge('⚡ Thinking...', '#f59e0b');
+        const res = await fetch('/api/voice/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: transcript, sender: 'Owner' })
+        });
+        const data = await res.json();
+        appendDirectChatTurn({ userText: transcript, data, isVoice: true });
+        if (data.audioBase64) {
+          await playRizAudio(data.audioBase64, data.reply);
+        }
+        if (handsFreeActive) {
+          setVoiceBadge('📞 Listening for your next question...', '#86efac');
+          try {
+            rec.start();
+          } catch (_) {}
+        }
+      };
+      rec.onerror = () => {
+        if (handsFreeActive) {
+          setTimeout(() => {
+            try {
+              rec.start();
+            } catch (_) {}
+          }, 800);
+        }
+      };
+      rec.start();
+    } else if (directVoiceBtn) {
+      directVoiceBtn.click();
+    }
+  });
+}
 
 // Save Settings
 document.getElementById('settingsForm').addEventListener('submit', async (e) => {

@@ -21,6 +21,7 @@ function getOrCreateSession(sessionKey) {
   if (!chatSessions.has(sessionKey)) {
     chatSessions.set(sessionKey, {
       state: 'locked',
+      voiceMode: false,
       pendingQuestion: null,
       previousInteractionId: null,
       history: [],
@@ -143,7 +144,8 @@ async function handleIncomingWhatsAppMessage({
   senderPhone = '+15550192834',
   chatName = 'Friends Group',
   chatType = 'group',
-  messageText = ''
+  messageText = '',
+  isVoiceMessage = false
 }) {
   const state = loadState();
   const config = state.config || {};
@@ -155,6 +157,20 @@ async function handleIncomingWhatsAppMessage({
   const session = getOrCreateSession(sessionKey);
   const textTrimmed = String(messageText || '').trim();
   const textLower = textTrimmed.toLowerCase();
+
+  // Check if user toggled voice mode on or off
+  if (/\b(?:voice\s+mode\s+on|enable\s+voice|switch\s+to\s+voice|voice\s+chat\s+on)\b/i.test(textTrimmed)) {
+    session.voiceMode = true;
+  } else if (/\b(?:voice\s+mode\s+off|disable\s+voice|text\s+only|text\s+mode)\b/i.test(textTrimmed)) {
+    session.voiceMode = false;
+  }
+
+  const wantsVoiceThisTurn =
+    Boolean(isVoiceMessage) ||
+    Boolean(session.voiceMode) ||
+    /\b(?:voice\s+note|voice\s+message|reply\s+(?:with|by|in)\s+voice|send\s+(?:a\s+)?voice|speak\s+to\s+me)\b/i.test(
+      textTrimmed
+    );
 
   const cleanDigits = (senderPhone || '').replace(/[^\d]/g, '');
   const makeWaLink = (replyText) =>
@@ -195,6 +211,7 @@ async function handleIncomingWhatsAppMessage({
     return {
       triggered: true,
       sessionState: session.state,
+      sendVoiceReply: wantsVoiceThisTurn,
       reply: lockReply,
       waDeepLink: makeWaLink(lockReply),
       log: logEntry
@@ -262,6 +279,7 @@ async function handleIncomingWhatsAppMessage({
       return {
         triggered: true,
         sessionState: session.state,
+        sendVoiceReply: wantsVoiceThisTurn,
         matchedTrigger: 'Password Verified',
         reply: replyText,
         provider,
@@ -295,6 +313,7 @@ async function handleIncomingWhatsAppMessage({
       return {
         triggered: true,
         sessionState: session.state,
+        sendVoiceReply: wantsVoiceThisTurn,
         reply: cancelReply,
         waDeepLink: makeWaLink(cancelReply),
         log: logEntry
@@ -323,6 +342,7 @@ async function handleIncomingWhatsAppMessage({
     return {
       triggered: true,
       sessionState: session.state,
+      sendVoiceReply: wantsVoiceThisTurn,
       reply: wrongPwdReply,
       waDeepLink: makeWaLink(wrongPwdReply),
       log: logEntry
@@ -384,6 +404,7 @@ async function handleIncomingWhatsAppMessage({
     return {
       triggered: true,
       sessionState: session.state,
+      sendVoiceReply: wantsVoiceThisTurn,
       matchedTrigger: 'Open Conversation',
       reply: aiResult.reply,
       provider: aiResult.provider,
@@ -462,6 +483,7 @@ async function handleIncomingWhatsAppMessage({
         return {
           triggered: true,
           sessionState: session.state,
+          sendVoiceReply: wantsVoiceThisTurn,
           matchedTrigger: triggerCheck.matchedTrigger,
           reply: replyText,
           provider: aiResult.provider,
@@ -500,6 +522,7 @@ async function handleIncomingWhatsAppMessage({
     return {
       triggered: true,
       sessionState: session.state,
+      sendVoiceReply: wantsVoiceThisTurn,
       matchedTrigger: triggerCheck.matchedTrigger,
       reply: promptReply,
       provider: 'Riz Live AI',
@@ -536,6 +559,7 @@ async function handleIncomingWhatsAppMessage({
   return {
     triggered: true,
     sessionState: session.state,
+    sendVoiceReply: wantsVoiceThisTurn,
     matchedTrigger: triggerCheck.matchedTrigger,
     reply: aiResult.reply,
     provider: aiResult.provider,

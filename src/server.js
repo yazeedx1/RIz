@@ -7,6 +7,7 @@ const { processRizMessage } = require('./rizBrain');
 const { handleIncomingWhatsAppMessage, getAllSessions } = require('./whatsappEngine');
 const { startLiveWhatsAppBridge, getBridgeStatus, autoConnectIfRegistered } = require('./whatsappWebBridge');
 const { executeTool, TOOL_DECLARATIONS } = require('./tools');
+const { transcribeAudioWithGemini, synthesizeSpeechMp3 } = require('./voiceEngine');
 
 const PORT = Number(process.env.PORT) || 3456;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -35,7 +36,7 @@ function readJsonBody(req) {
     let raw = '';
     req.on('data', (chunk) => {
       raw += chunk;
-      if (raw.length > 2 * 1024 * 1024) {
+      if (raw.length > 15 * 1024 * 1024) {
         reject(new Error('Request body too large'));
       }
     });
@@ -136,20 +137,80 @@ function createServer() {
           sender: body.sender || 'Owner',
           source: 'dashboard-chat'
         });
+        if (body.withVoice && result.reply) {
+          const mp3 = await synthesizeSpeechMp3(result.reply);
+          if (mp3) result.audioBase64 = mp3.toString('base64');
+        }
         return sendJson(res, 200, result);
+      }
+
+      // 4b. Live Voice Chat with Riz (Audio -> Gemini Multimodal Transcription -> Real Tools -> Spoken MP3 Audio Reply)
+      if (req.method === 'POST' && pathname === '/api/voice/chat') {
+        const body = await readJsonBody(req);
+        let transcript = (body.text || '').trim();
+        if (!transcript && body.audioBase64) {
+          const audioBuffer = Buffer.from(body.audioBase64, 'base64');
+          transcript = await transcribeAudioWithGemini({
+            audioBuffer,
+            mimeType: body.mimeType || 'audio/webm'
+          });
+        }
+        if (!transcript) {
+          return sendJson(res, 400, { error: 'Could not hear speech clearly. Please try speaking again.' });
+        }
+        const result = await processRizMessage({
+          message: transcript,
+          sender: body.sender || 'Owner',
+          source: 'voice-chat'
+        });
+        const mp3 = result.reply ? await synthesizeSpeechMp3(result.reply) : null;
+        return sendJson(res, 200, {
+          transcript,
+          ...result,
+          audioBase64: mp3 ? mp3.toString('base64') : null,
+          audioMimeType: 'audio/mpeg'
+        });
+      }
+
+      // 4c. On-demand Text-to-Speech endpoint
+      if (req.method === 'POST' && pathname === '/api/voice/tts') {
+        const body = await readJsonBody(req);
+        const mp3 = await synthesizeSpeechMp3(body.text || '');
+        if (!mp3) {
+          return sendJson(res, 500, { error: 'TTS generation failed' });
+        }
+        return sendJson(res, 200, {
+          audioBase64: mp3.toString('base64'),
+          audioMimeType: 'audio/mpeg'
+        });
       }
 
       // 5. WhatsApp Simulator / Incoming Bridge Message
       if (req.method === 'POST' && pathname === '/api/whatsapp/incoming') {
         const body = await readJsonBody(req);
+        let messageText = body.messageText || '';
+        const isVoiceMessage = Boolean(body.isVoiceMessage || body.audioBase64);
+        if (!messageText && body.audioBase64) {
+          const audioBuffer = Buffer.from(body.audioBase64, 'base64');
+          messageText = await transcribeAudioWithGemini({
+            audioBuffer,
+            mimeType: body.mimeType || 'audio/webm'
+          });
+        }
         const result = await handleIncomingWhatsAppMessage({
           chatId: body.chatId || `sim-${body.chatType || 'group'}`,
           senderName: body.senderName || 'Alex',
           senderPhone: body.senderPhone || '+15550192834',
           chatName: body.chatName || 'Project Squad Group',
           chatType: body.chatType || 'group',
-          messageText: body.messageText || ''
+          messageText,
+          isVoiceMessage
         });
+        if (result.triggered && result.reply && (result.sendVoiceReply || body.withVoice)) {
+          const mp3 = await synthesizeSpeechMp3(result.reply);
+          if (mp3) result.audioBase64 = mp3.toString('base64');
+        }
+        result.transcribedText = messageText;
         return sendJson(res, 200, result);
       }
 
