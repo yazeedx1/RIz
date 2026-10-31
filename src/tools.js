@@ -680,7 +680,10 @@ async function executeTool(name, args = {}) {
               timeout: 10000
             });
           }
-          const pushOut = execSync('git push origin main 2>&1', {
+          const remoteTarget = ghToken
+            ? `https://x-access-token:${ghToken}@github.com/yazeedx1/RIz.git`
+            : 'origin';
+          const pushOut = execSync(`git push ${remoteTarget} main 2>&1`, {
             cwd: projectDir,
             encoding: 'utf8',
             timeout: 15000
@@ -695,13 +698,13 @@ async function executeTool(name, args = {}) {
             operation: 'git_push',
             repository: 'https://github.com/yazeedx1/RIz',
             latestCommit,
-            output: pushOut.trim() || 'Everything up-to-date on origin/main'
+            output: (pushOut || '').replace(ghToken, '***').trim() || 'Everything up-to-date on origin/main'
           };
         } catch (err) {
           return {
             status: 'error',
             operation: 'git_push',
-            message: err.message
+            message: String(err.message || '').replace(ghToken, '***')
           };
         }
       }
