@@ -779,59 +779,171 @@ async function executeTool(name, args = {}) {
     }
 
     case 'search_emails': {
-      const q = (args.query || '').toLowerCase().trim();
-      const gmailToken = process.env.GMAIL_ACCESS_TOKEN || dotEnv.GMAIL_ACCESS_TOKEN || '';
+      const q = (args.query || '').trim();
+      const cacheKey = `gmail:${q || '__ALL__'}`;
+      const cachedGmail = gcalCacheByDateKey.get(cacheKey);
+      if (cachedGmail && Date.now() - cachedGmail.fetchedAt < 60 * 1000) {
+        return cachedGmail.data;
+      }
 
-      if (gmailToken) {
-        try {
-          const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=10${
-            q ? `&q=${encodeURIComponent(q)}` : ''
-          }`;
-          const res = await fetch(url, {
-            headers: { Authorization: `Bearer ${gmailToken}` }
-          });
-          if (res.ok) {
-            const listData = await res.json();
-            return {
-              status: 'success',
-              source: 'Live Gmail API',
-              messages: listData.messages || []
-            };
-          }
-        } catch (_) {}
+      const { fetchGmailViaImapXoAuth2 } = require('./gmailImapBridge');
+      const tokensDir = path.join(__dirname, '..', 'data', 'gmail-tokens');
+      const tokenFiles = fs.existsSync(tokensDir)
+        ? fs.readdirSync(tokensDir).filter((f) => f.endsWith('.json'))
+        : [];
+
+      if (tokenFiles.length > 0) {
+        const connectedAccounts = [];
+        const allMessages = [];
+
+        await Promise.all(
+          tokenFiles.map(async (file) => {
+            try {
+              const filePath = path.join(tokensDir, file);
+              const cred = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+              const accountEmail = cred.email || file.replace(/\.json$/, '');
+              let accessToken = cred.token && cred.token.access_token;
+
+              // Refresh access_token if expired or missing
+              if (
+                cred.token &&
+                cred.token.refresh_token &&
+                (!accessToken || !cred.token.expiry || Date.now() > cred.token.expiry - 60000)
+              ) {
+                const rTok = await fetch('https://oauth2.googleapis.com/token', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                  body: new URLSearchParams({
+                    client_id: cred.client_id,
+                    client_secret: cred.client_secret,
+                    refresh_token: cred.token.refresh_token,
+                    grant_type: 'refresh_token'
+                  })
+                });
+                if (rTok.ok) {
+                  const refreshed = await rTok.json();
+                  accessToken = refreshed.access_token;
+                  cred.token.access_token = accessToken;
+                  cred.token.expiry = Date.now() + (Number(refreshed.expires_in) || 3599) * 1000;
+                  fs.writeFileSync(filePath, JSON.stringify(cred, null, 2), 'utf8');
+                }
+              }
+
+              if (!accessToken) return;
+              connectedAccounts.push(accountEmail);
+
+              // Fetch via native Gmail IMAP XOAUTH2 (works with verified Thunderbird OAuth client)
+              const imapMessages = await fetchGmailViaImapXoAuth2({
+                email: accountEmail,
+                accessToken,
+                query: q,
+                maxResults: 6
+              });
+
+              for (const item of imapMessages) {
+                if (item) allMessages.push(item);
+              }
+            } catch (_) {}
+          })
+        );
+
+        const emailResult = {
+          status: 'success',
+          source: 'Live Multi-Account Gmail (XOAUTH2)',
+          gmailAccountsConnected: connectedAccounts,
+          count: allMessages.length,
+          emails: allMessages
+        };
+        gcalCacheByDateKey.set(cacheKey, { fetchedAt: Date.now(), data: emailResult });
+        return emailResult;
       }
 
       let emails = state.emails;
-      if (q === 'unread') {
+      if (q.toLowerCase() === 'unread') {
         emails = emails.filter((e) => e.unread);
       } else if (q) {
+        const ql = q.toLowerCase();
         emails = emails.filter(
           (e) =>
-            e.from.toLowerCase().includes(q) ||
-            e.subject.toLowerCase().includes(q) ||
-            e.snippet.toLowerCase().includes(q)
+            e.from.toLowerCase().includes(ql) ||
+            e.subject.toLowerCase().includes(ql) ||
+            e.snippet.toLowerCase().includes(ql)
         );
       }
       return {
         status: 'success',
-        gmailApiConfigured: Boolean(gmailToken),
+        gmailApiConfigured: false,
         count: emails.length,
         emails,
-        note:
-          emails.length === 0 && !gmailToken
-            ? 'No emails stored locally and GMAIL_ACCESS_TOKEN is not yet configured.'
-            : undefined
+        note: 'Click the Gmail authorization links in chat to finish linking yazeedx@gmail.com and yaz@thegauntlet.sa.'
       };
     }
 
     case 'send_or_draft_email': {
+      const { sendGmailViaSmtpXoAuth2 } = require('./gmailImapBridge');
+      const tokensDir = path.join(__dirname, '..', 'data', 'gmail-tokens');
+      const tokenFiles = fs.existsSync(tokensDir)
+        ? fs.readdirSync(tokensDir).filter((f) => f.endsWith('.json'))
+        : [];
+
+      let sentViaLiveGmail = false;
+      let senderAccount = 'yazeedx@gmail.com';
+
+      if (tokenFiles.length > 0) {
+        try {
+          const preferredFile =
+            tokenFiles.find((f) => args.fromAccount && f.includes(args.fromAccount)) ||
+            tokenFiles.find((f) => f.includes('yazeedx@gmail.com')) ||
+            tokenFiles[0];
+          const filePath = path.join(tokensDir, preferredFile);
+          const cred = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+          senderAccount = cred.email || preferredFile.replace(/\.json$/, '');
+          let accessToken = cred.token && cred.token.access_token;
+
+          if (
+            cred.token &&
+            cred.token.refresh_token &&
+            (!accessToken || !cred.token.expiry || Date.now() > cred.token.expiry - 60000)
+          ) {
+            const rTok = await fetch('https://oauth2.googleapis.com/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                client_id: cred.client_id,
+                client_secret: cred.client_secret,
+                refresh_token: cred.token.refresh_token,
+                grant_type: 'refresh_token'
+              })
+            });
+            if (rTok.ok) {
+              const refreshed = await rTok.json();
+              accessToken = refreshed.access_token;
+              cred.token.access_token = accessToken;
+              cred.token.expiry = Date.now() + (Number(refreshed.expires_in) || 3599) * 1000;
+              fs.writeFileSync(filePath, JSON.stringify(cred, null, 2), 'utf8');
+            }
+          }
+
+          if (accessToken && args.to) {
+            sentViaLiveGmail = await sendGmailViaSmtpXoAuth2({
+              fromEmail: senderAccount,
+              accessToken,
+              to: args.to,
+              subject: args.subject,
+              body: args.body
+            });
+          }
+        } catch (_) {}
+      }
+
       const newEmail = {
         id: 'eml-' + Date.now(),
-        from: 'me@gmail.com',
+        from: senderAccount,
         to: args.to,
         subject: args.subject,
         snippet: args.body,
         unread: false,
+        sentViaLiveGmail,
         timestamp: new Date().toISOString()
       };
       state.emails.unshift(newEmail);
@@ -841,7 +953,11 @@ async function executeTool(name, args = {}) {
       )}&body=${encodeURIComponent(args.body)}`;
       return {
         status: 'success',
-        message: `Prepared email to ${args.to} with subject "${args.subject}".`,
+        sentViaLiveGmail,
+        fromAccount: senderAccount,
+        message: sentViaLiveGmail
+          ? `Sent email from ${senderAccount} to ${args.to} with subject "${args.subject}".`
+          : `Prepared email to ${args.to} with subject "${args.subject}".`,
         email: newEmail,
         mailtoLink: mailtoUrl
       };
