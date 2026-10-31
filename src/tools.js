@@ -306,74 +306,108 @@ function computeFreeWindows(events) {
   return { busyBlocks, freeWindows };
 }
 
+const GCAL_HOMES = [
+  path.join(__dirname, '..', 'data', 'gcal-homes', 'account1'),
+  '/home/droid'
+];
+
 /**
- * Queries real Google Calendar events via the official gcalendar CLI if signed in.
+ * Queries real Google Calendar events across all connected Google Calendar accounts
+ * and sub-calendars via the official gcalendar CLI.
  */
 function fetchRealGoogleCalendarEvents(dateStr) {
   if (!fs.existsSync(GCALENDAR_SCRIPT)) {
     return { connected: false, events: [], authNote: 'gcalendar CLI script not found' };
   }
-  try {
-    const cliArgs = ['readonly', 'events', '--max', '25', '--json'];
-    if (dateStr) {
-      cliArgs.push('--date', dateStr);
-    }
-    const stdout = execFileSync(GCALENDAR_SCRIPT, cliArgs, {
-      encoding: 'utf8',
-      timeout: 8000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        HOME: '/home/droid',
-        ANTIGRAVITY_APP_DATA_DIR: '/home/droid/.gemini/antigravity'
+
+  const allNormalized = [];
+  const connectedProfiles = [];
+  const seenEventKeys = new Set();
+
+  for (const homeDir of GCAL_HOMES) {
+    const tokenPath = path.join(homeDir, '.gemini', 'antigravity', 'plugin_data', 'gcalendar', 'token.json');
+    if (!fs.existsSync(tokenPath)) continue;
+
+    const env = {
+      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+      HOME: homeDir,
+      ANTIGRAVITY_APP_DATA_DIR: '/home/droid/.gemini/antigravity'
+    };
+
+    try {
+      const cliArgs = ['readonly', 'events', '--max', '25', '--json'];
+      if (dateStr) {
+        cliArgs.push('--date', dateStr);
       }
-    });
-    const parsed = JSON.parse(stdout);
-    const items = Array.isArray(parsed) ? parsed : parsed.items || parsed.events || [];
-    const seenRecurringTitles = new Set();
-    const normalized = [];
-
-    for (const ev of items) {
-      const title = ev.summary || ev.title || '(Untitled Event)';
-      if (!dateStr && seenRecurringTitles.has(title)) {
-        continue;
-      }
-      seenRecurringTitles.add(title);
-
-      const startRaw = (ev.start && (ev.start.dateTime || ev.start.date)) || ev.startTime || '';
-      const endRaw = (ev.end && (ev.end.dateTime || ev.end.date)) || ev.endTime || '';
-      const datePart = startRaw ? String(startRaw).slice(0, 10) : dateStr || new Date().toISOString().slice(0, 10);
-      const timePart =
-        startRaw && String(startRaw).includes('T') ? String(startRaw).slice(11, 16) : 'All Day';
-      const endTimePart =
-        endRaw && String(endRaw).includes('T')
-          ? String(endRaw).slice(11, 16)
-          : timePart === 'All Day'
-          ? 'All Day'
-          : computeEndTime(timePart, 30);
-
-      normalized.push({
-        id: ev.id || `gcal-${Math.random().toString(36).slice(2, 7)}`,
-        title,
-        date: datePart,
-        time: timePart,
-        endTime: endTimePart,
-        durationMinutes: 30,
-        location: ev.location || ev.hangoutLink || 'Google Calendar',
-        source: 'Google Calendar (yazeedx@gmail.com)'
+      const stdout = execFileSync(GCALENDAR_SCRIPT, cliArgs, {
+        encoding: 'utf8',
+        timeout: 8000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env
       });
-    }
-    return { connected: true, account: 'yazeedx@gmail.com', events: normalized, authNote: null };
-  } catch (err) {
-    const stderr = String((err && err.stderr) || err.message || '');
+      const parsed = JSON.parse(stdout);
+      const items = Array.isArray(parsed) ? parsed : parsed.items || parsed.events || [];
+      const seenRecurringTitles = new Set();
+      let accountEmail = homeDir.includes('account1') ? 'yazeedx@gmail.com' : 'yaz@thegauntlet.sa';
+
+      for (const ev of items) {
+        if (ev.creator && ev.creator.email && ev.creator.self) {
+          accountEmail = ev.creator.email;
+        } else if (ev.organizer && ev.organizer.email && ev.organizer.self) {
+          accountEmail = ev.organizer.email;
+        }
+        const title = ev.summary || ev.title || '(Untitled Event)';
+        if (!dateStr && seenRecurringTitles.has(title)) {
+          continue;
+        }
+        seenRecurringTitles.add(title);
+
+        const startRaw = (ev.start && (ev.start.dateTime || ev.start.date)) || ev.startTime || '';
+        const endRaw = (ev.end && (ev.end.dateTime || ev.end.date)) || ev.endTime || '';
+        const datePart = startRaw ? String(startRaw).slice(0, 10) : dateStr || new Date().toISOString().slice(0, 10);
+        const timePart =
+          startRaw && String(startRaw).includes('T') ? String(startRaw).slice(11, 16) : 'All Day';
+        const endTimePart =
+          endRaw && String(endRaw).includes('T')
+            ? String(endRaw).slice(11, 16)
+            : timePart === 'All Day'
+            ? 'All Day'
+            : computeEndTime(timePart, 30);
+
+        const dedupeKey = `${accountEmail}|${title}|${datePart}|${timePart}`;
+        if (seenEventKeys.has(dedupeKey)) continue;
+        seenEventKeys.add(dedupeKey);
+
+        allNormalized.push({
+          id: ev.id || `gcal-${Math.random().toString(36).slice(2, 7)}`,
+          title,
+          date: datePart,
+          time: timePart,
+          endTime: endTimePart,
+          durationMinutes: 30,
+          location: ev.location || ev.hangoutLink || 'Google Calendar',
+          calendarAccount: accountEmail,
+          source: `Google Calendar (${accountEmail})`
+        });
+      }
+      connectedProfiles.push(accountEmail);
+    } catch (_) {}
+  }
+
+  if (connectedProfiles.length === 0) {
     return {
       connected: false,
       events: [],
-      authNote: stderr.includes('no credentials found')
-        ? 'Google Calendar CLI needs one-time OAuth login (gcalendar auth login).'
-        : stderr.trim()
+      authNote: 'Google Calendar CLI needs one-time OAuth login (gcalendar auth login).'
     };
   }
+
+  return {
+    connected: true,
+    accounts: connectedProfiles,
+    events: allNormalized,
+    authNote: null
+  };
 }
 
 async function executeTool(name, args = {}) {
@@ -411,6 +445,7 @@ async function executeTool(name, args = {}) {
         status: 'success',
         date: targetDate,
         googleCalendarLiveConnected: gcal.connected,
+        googleCalendarAccounts: gcal.accounts || [],
         googleCalendarAuthNote: gcal.authNote,
         currentStatus: state.ownerProfile.currentStatus,
         currentLocation: state.ownerProfile.currentLocation,
@@ -431,6 +466,7 @@ async function executeTool(name, args = {}) {
       return {
         status: 'success',
         googleCalendarLiveConnected: gcal.connected,
+        googleCalendarAccounts: gcal.accounts || [],
         googleCalendarAuthNote: gcal.authNote,
         count: allEvents.length,
         events: allEvents
@@ -451,7 +487,16 @@ async function executeTool(name, args = {}) {
           const out = execFileSync(
             GCALENDAR_SCRIPT,
             ['mutate', 'create', '--summary', args.title || 'Meeting', '--start', startIso, '--end', endIso],
-            { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'pipe'] }
+            {
+              encoding: 'utf8',
+              timeout: 8000,
+              stdio: ['ignore', 'pipe', 'pipe'],
+              env: {
+                PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+                HOME: '/home/droid',
+                ANTIGRAVITY_APP_DATA_DIR: '/home/droid/.gemini/antigravity'
+              }
+            }
           );
           const linkMatch = String(out).match(/https:\/\/\S+/);
           if (linkMatch) gcalCreatedLink = linkMatch[0];
