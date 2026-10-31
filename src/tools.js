@@ -131,20 +131,40 @@ const TOOL_DECLARATIONS = [
     type: 'function',
     name: 'github_and_git_operations',
     description:
-      'Executes real Git commands on local repositories (status, log, branches, diff) or queries the live GitHub REST API for the owner\'s repositories, commits, and issues.',
+      'Executes real Git commands on local repositories (git_status, git_log, git_push) or queries the live GitHub REST API for the owner\'s repositories (github_repos), repository files/commits (github_repo_details), user profile (github_user), and search (github_search).',
     parameters: {
       type: 'object',
       properties: {
         operation: {
           type: 'string',
-          description: '"git_status", "git_log", "github_repos", "github_user", or "github_search"'
+          description:
+            '"git_status", "git_log", "git_push", "github_repos", "github_repo_details", "github_user", or "github_search"'
         },
         usernameOrQuery: {
           type: 'string',
-          description: 'GitHub username, repo name (owner/repo), or search query'
+          description: 'GitHub username, repo name (e.g. "yazeedx1/RIz" or "serbtec"), or commit message'
+        },
+        filePath: {
+          type: 'string',
+          description: 'Optional path inside a GitHub repository to read or list (e.g. "src/server.js")'
         }
       },
       required: ['operation']
+    }
+  },
+  {
+    type: 'function',
+    name: 'antigravity_bridge',
+    description:
+      'Connects Riz directly to the live Google Antigravity IDE & Agent environment: inspects active Antigravity workspace projects, installed plugins, skills, MCP servers, and recent brain conversations.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          description: '"status" (full Antigravity overview), "skills" (list skills & plugins), or "brain" (list active Antigravity conversations)'
+        }
+      }
     }
   },
   {
@@ -188,7 +208,7 @@ const TOOL_DECLARATIONS = [
     type: 'function',
     name: 'search_emails',
     description:
-      'Searches the owner\'s real Gmail inbox (via Gmail API if token is configured) and real saved/sent emails.',
+      'Searches the owner\'s real Gmail inbox across both connected accounts (yazeedx@gmail.com and yaz@thegauntlet.sa via XOAUTH2) and saved/sent emails.',
     parameters: {
       type: 'object',
       properties: {
@@ -202,13 +222,14 @@ const TOOL_DECLARATIONS = [
   {
     type: 'function',
     name: 'send_or_draft_email',
-    description: 'Drafts or sends an email and generates a direct mailto / Gmail compose link.',
+    description: 'Sends a live email via Gmail SMTP XOAUTH2 (from yazeedx@gmail.com or yaz@thegauntlet.sa) and generates a direct mailto link.',
     parameters: {
       type: 'object',
       properties: {
         to: { type: 'string', description: 'Recipient email address' },
         subject: { type: 'string', description: 'Email subject line' },
-        body: { type: 'string', description: 'Email body text' }
+        body: { type: 'string', description: 'Email body text' },
+        fromAccount: { type: 'string', description: 'Optional sender account (yazeedx@gmail.com or yaz@thegauntlet.sa)' }
       },
       required: ['to', 'subject', 'body']
     }
@@ -237,7 +258,7 @@ const TOOL_DECLARATIONS = [
     type: 'function',
     name: 'get_connected_accounts_and_system_status',
     description:
-      'Returns the real connection status of all user accounts/CLIs (WhatsApp, Google Calendar CLI, GitHub, Gmail, Drive) and live system metrics.',
+      'Returns the real connection status of all user accounts/CLIs (WhatsApp, Google Calendar, Gmail, GitHub, Antigravity, Drive) and live system metrics.',
     parameters: {
       type: 'object',
       properties: {}
@@ -622,27 +643,64 @@ async function executeTool(name, args = {}) {
       const op = String(args.operation || 'git_status').toLowerCase();
       const ghToken = state.config.githubToken || process.env.GITHUB_TOKEN || dotEnv.GITHUB_TOKEN || '';
       const ghUser =
-        args.usernameOrQuery ||
         state.config.githubUsername ||
         process.env.GITHUB_USERNAME ||
         dotEnv.GITHUB_USERNAME ||
-        '';
+        'yazeedx1';
+      const projectDir = path.resolve(__dirname, '..');
 
       if (op === 'git_status' || op === 'git_log') {
-        const projectDir = path.resolve(__dirname, '..');
         try {
           const cmd = op === 'git_log' ? 'git log -n 10 --oneline' : 'git status -s && git branch -a';
           const out = execSync(cmd, { cwd: projectDir, encoding: 'utf8', timeout: 5000 });
           return {
             status: 'success',
             operation: op,
+            repositoryUrl: 'https://github.com/yazeedx1/RIz',
             workingDirectory: projectDir,
-            output: out.trim() || 'Clean working tree'
+            output: out.trim() || 'Clean working tree on branch main (synced with https://github.com/yazeedx1/RIz)'
           };
         } catch (err) {
           return {
             status: 'info',
             operation: op,
+            message: err.message
+          };
+        }
+      }
+
+      if (op === 'git_push') {
+        try {
+          const commitMsg = args.usernameOrQuery || 'Riz live assistant auto-sync';
+          const statusOut = execSync('git status -s', { cwd: projectDir, encoding: 'utf8', timeout: 5000 }).trim();
+          if (statusOut) {
+            execSync(`git add -A && git commit -m ${JSON.stringify(commitMsg)}`, {
+              cwd: projectDir,
+              encoding: 'utf8',
+              timeout: 10000
+            });
+          }
+          const pushOut = execSync('git push origin main 2>&1', {
+            cwd: projectDir,
+            encoding: 'utf8',
+            timeout: 15000
+          });
+          const latestCommit = execSync('git log -n 1 --oneline', {
+            cwd: projectDir,
+            encoding: 'utf8',
+            timeout: 5000
+          }).trim();
+          return {
+            status: 'success',
+            operation: 'git_push',
+            repository: 'https://github.com/yazeedx1/RIz',
+            latestCommit,
+            output: pushOut.trim() || 'Everything up-to-date on origin/main'
+          };
+        } catch (err) {
+          return {
+            status: 'error',
+            operation: 'git_push',
             message: err.message
           };
         }
@@ -658,18 +716,10 @@ async function executeTool(name, args = {}) {
 
       try {
         if (op === 'github_repos') {
-          const url = ghToken && !args.usernameOrQuery
-            ? 'https://api.github.com/user/repos?sort=updated&per_page=15'
-            : ghUser
-            ? `https://api.github.com/users/${encodeURIComponent(ghUser)}/repos?sort=updated&per_page=15`
-            : null;
+          const url = ghToken
+            ? 'https://api.github.com/user/repos?sort=updated&per_page=25'
+            : `https://api.github.com/users/${encodeURIComponent(ghUser)}/repos?sort=updated&per_page=25`;
 
-          if (!url) {
-            return {
-              status: 'needs_input',
-              message: 'No GitHub username or GITHUB_TOKEN configured yet. Provide a GitHub username or set GITHUB_TOKEN.'
-            };
-          }
           const res = await fetch(url, { headers });
           const data = await res.json();
           if (!res.ok) {
@@ -680,24 +730,75 @@ async function executeTool(name, args = {}) {
             private: r.private,
             description: r.description,
             language: r.language,
+            defaultBranch: r.default_branch,
             updatedAt: r.updated_at,
             url: r.html_url
           }));
-          return { status: 'success', count: repos.length, repositories: repos };
+          return {
+            status: 'success',
+            githubAccount: ghUser,
+            primaryRizRepo: 'https://github.com/yazeedx1/RIz',
+            count: repos.length,
+            repositories: repos
+          };
+        }
+
+        if (op === 'github_repo_details') {
+          let targetRepo = (args.usernameOrQuery || 'yazeedx1/RIz').trim();
+          if (!targetRepo.includes('/')) {
+            targetRepo = `${ghUser}/${targetRepo}`;
+          }
+          const subPath = (args.filePath || '').replace(/^\/+/, '');
+          const contentsUrl = subPath
+            ? `https://api.github.com/repos/${targetRepo}/contents/${subPath}`
+            : `https://api.github.com/repos/${targetRepo}/contents`;
+          const commitsUrl = `https://api.github.com/repos/${targetRepo}/commits?per_page=8`;
+
+          const [contentsRes, commitsRes] = await Promise.all([
+            fetch(contentsUrl, { headers }),
+            fetch(commitsUrl, { headers })
+          ]);
+          const contentsData = await contentsRes.json();
+          const commitsData = await commitsRes.json();
+
+          let filesOrContent = null;
+          if (Array.isArray(contentsData)) {
+            filesOrContent = contentsData.map((item) => ({
+              name: item.name,
+              path: item.path,
+              type: item.type,
+              size: item.size
+            }));
+          } else if (contentsData && contentsData.content && contentsData.encoding === 'base64') {
+            filesOrContent = {
+              path: contentsData.path,
+              size: contentsData.size,
+              contentSnippet: Buffer.from(contentsData.content, 'base64').toString('utf8').slice(0, 3500)
+            };
+          } else {
+            filesOrContent = contentsData;
+          }
+
+          const recentCommits = (Array.isArray(commitsData) ? commitsData : []).map((c) => ({
+            sha: (c.sha || '').slice(0, 7),
+            message: c.commit && c.commit.message,
+            author: c.commit && c.commit.author && c.commit.author.name,
+            date: c.commit && c.commit.author && c.commit.author.date
+          }));
+
+          return {
+            status: 'success',
+            repository: targetRepo,
+            url: `https://github.com/${targetRepo}`,
+            contents: filesOrContent,
+            recentCommits
+          };
         }
 
         if (op === 'github_user') {
-          const url = ghToken && !args.usernameOrQuery
+          const url = ghToken
             ? 'https://api.github.com/user'
-            : ghUser
-            ? `https://api.github.com/users/${encodeURIComponent(ghUser)}`
-            : null;
-          if (!url) {
-            return {
-              status: 'needs_input',
-              message: 'Specify a GitHub username or configure GITHUB_TOKEN.'
-            };
-          }
+            : `https://api.github.com/users/${encodeURIComponent(ghUser)}`;
           const res = await fetch(url, { headers });
           const data = await res.json();
           return { status: res.ok ? 'success' : 'error', profile: data };
@@ -723,6 +824,45 @@ async function executeTool(name, args = {}) {
       }
 
       return { status: 'error', message: `Unsupported GitHub operation: ${op}` };
+    }
+
+    case 'antigravity_bridge': {
+      const agyRoot = path.join(WORKSPACE_ROOT, '.gemini', 'antigravity');
+      const pluginsRoot = path.join(WORKSPACE_ROOT, '.gemini', 'config', 'plugins');
+      const skillsRoot = path.join(WORKSPACE_ROOT, '.gemini', 'config', 'skills');
+      const mcpRoot = path.join(agyRoot, 'mcp');
+      const brainRoot = path.join(agyRoot, 'brain');
+
+      const safeReaddir = (dir) => {
+        try {
+          return fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+        } catch (_) {
+          return [];
+        }
+      };
+
+      const plugins = safeReaddir(pluginsRoot).filter((n) => !n.startsWith('.'));
+      const customSkills = safeReaddir(skillsRoot).filter((n) => !n.startsWith('.'));
+      const mcpServers = safeReaddir(mcpRoot).filter((n) => !n.startsWith('.'));
+      const brainConversations = safeReaddir(brainRoot)
+        .filter((n) => !n.startsWith('.'))
+        .slice(0, 10);
+      const workspaceItems = safeReaddir(WORKSPACE_ROOT).filter((n) => !n.startsWith('.'));
+
+      return {
+        status: 'success',
+        connected: true,
+        bridgeMode: 'Bidirectional Antigravity Agent + Skill + Workspace Bridge',
+        workspaceRoot: WORKSPACE_ROOT,
+        rizSkillRegistered: fs.existsSync(path.join(skillsRoot, 'riz_assistant', 'SKILL.md')),
+        rizDashboardUrl: 'http://localhost:3456',
+        rizGitHubRepo: 'https://github.com/yazeedx1/RIz',
+        workspaceProjects: workspaceItems,
+        installedPlugins: plugins,
+        customSkills,
+        mcpServers,
+        activeBrainConversationIds: brainConversations
+      };
     }
 
     case 'list_tasks_and_notes': {

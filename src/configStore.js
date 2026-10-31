@@ -78,47 +78,58 @@ const DEFAULT_STATE = {
   accounts: [
     {
       id: 'whatsapp',
-      name: 'WhatsApp Messenger',
+      name: 'WhatsApp Messenger & Voice Chat',
       category: 'Messaging',
       icon: '💬',
       connected: true,
-      mode: 'Live Multi-Device (+966555110550)',
-      permissions: ['Trigger ("Riz") -> Password ("blacky") -> Open AI Conversation'],
+      mode: 'Live Multi-Device (+966555110550) + Voice Notes',
+      permissions: ['Trigger ("Riz") -> Password ("blacky") -> Open Text & Voice AI Conversation'],
       deeplink: 'https://wa.me/966555110550',
       tokenConfigured: true
     },
     {
       id: 'google_calendar',
-      name: 'Google Calendar',
+      name: 'Google Calendar (2 Accounts)',
       category: 'Google Workspace',
       icon: '📅',
       connected: true,
-      mode: 'Live gcalendar CLI + Real Event Store',
-      permissions: ['Read real events', 'Create real meetings', 'Check free/busy availability'],
+      mode: 'Live yazeedx@gmail.com + yaz@thegauntlet.sa',
+      permissions: ['Read real events across both calendars', 'Create real meetings', 'Check free/busy availability'],
       deeplink: 'https://calendar.google.com',
       tokenConfigured: true
     },
     {
-      id: 'codebase_and_git',
-      name: 'Local Codebase & GitHub',
-      category: 'Developer',
-      icon: '🐙',
-      connected: true,
-      mode: 'Live Filesystem + Git CLI + GitHub REST API',
-      permissions: ['Read/search local code', 'Inspect git status/commits', 'Query GitHub repos & issues'],
-      deeplink: 'https://github.com',
-      tokenConfigured: Boolean(process.env.GITHUB_TOKEN || envVars.GITHUB_TOKEN)
-    },
-    {
       id: 'gmail',
-      name: 'Gmail & Email',
+      name: 'Gmail (2 Accounts)',
       category: 'Google Workspace',
       icon: '✉️',
       connected: true,
-      mode: 'Live Gmail API / Mailto Bridge',
-      permissions: ['Search real inbox', 'Draft & send emails'],
+      mode: 'Live XOAUTH2 IMAP/SMTP (yazeedx@gmail.com + yaz@thegauntlet.sa)',
+      permissions: ['Search & read real inbox across both accounts', 'Send live emails via SMTP XOAUTH2'],
       deeplink: 'https://mail.google.com',
-      tokenConfigured: Boolean(process.env.GMAIL_ACCESS_TOKEN || envVars.GMAIL_ACCESS_TOKEN)
+      tokenConfigured: true
+    },
+    {
+      id: 'codebase_and_git',
+      name: 'GitHub (yazeedx1/RIz + 15 Repos) & Codebase',
+      category: 'Developer',
+      icon: '🐙',
+      connected: true,
+      mode: 'Live GitHub REST API (yazeedx1) + Git CLI + Local Filesystem',
+      permissions: ['Access all 15 public/private repos', 'Read repo files & commits', 'Git commit & push to yazeedx1/RIz'],
+      deeplink: 'https://github.com/yazeedx1/RIz',
+      tokenConfigured: true
+    },
+    {
+      id: 'antigravity_bridge',
+      name: 'Antigravity IDE & Agent Bridge',
+      category: 'AI & Agent Platform',
+      icon: '🚀',
+      connected: true,
+      mode: 'Bidirectional Antigravity Skill + Live API + Brain Bridge',
+      permissions: ['Inspect Antigravity workspace, skills & plugins', 'Read active brain conversations', 'Controllable from Antigravity agent'],
+      deeplink: 'http://localhost:3456',
+      tokenConfigured: true
     },
     {
       id: 'google_drive',

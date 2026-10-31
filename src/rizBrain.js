@@ -339,22 +339,53 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     toolCalls.push({ name: 'list_workspace_files', arguments: {}, result: wsList });
   }
 
-  // 3. Git & GitHub queries
-  if (/\b(?:github|git|commit|commits|branch|pull\s+request|issue|issues|repositories|repos)\b/i.test(userMessage)) {
+  // 3. Git & GitHub queries (matches github, git, repo, repos, rip, repository, push, commits, or any of yazeedx1's repo names)
+  if (
+    /\b(?:github|git|repo|repos|rip|repository|repositories|commit|commits|branch|push|pull|serbtec|gauntlethub|ssbc|tpnewsite|lebara|vettrack|bino|cst|wadi-jeddah|talemia|wbr|mcit|ssp)\b/i.test(
+      userMessage
+    )
+  ) {
     thoughts.push('Running real Git and GitHub operations via github_and_git_operations.');
-    const gitStatus = await executeTool('github_and_git_operations', { operation: 'git_status' });
-    toolCalls.push({ name: 'github_and_git_operations', arguments: { operation: 'git_status' }, result: gitStatus });
+    if (/\bpush\b/i.test(userMessage)) {
+      const pushRes = await executeTool('github_and_git_operations', {
+        operation: 'git_push',
+        usernameOrQuery: 'Riz live assistant sync via WhatsApp/Chat'
+      });
+      toolCalls.push({ name: 'github_and_git_operations', arguments: { operation: 'git_push' }, result: pushRes });
+    } else {
+      const gitStatus = await executeTool('github_and_git_operations', { operation: 'git_status' });
+      toolCalls.push({ name: 'github_and_git_operations', arguments: { operation: 'git_status' }, result: gitStatus });
+    }
 
-    const userMatch = userMessage.match(/\b(?:github\.com\/|user\s+|username\s+)([a-zA-Z0-9-]+)\b/i);
     const ghRepos = await executeTool('github_and_git_operations', {
-      operation: 'github_repos',
-      usernameOrQuery: userMatch ? userMatch[1] : undefined
+      operation: 'github_repos'
     });
     toolCalls.push({
       name: 'github_and_git_operations',
-      arguments: { operation: 'github_repos', usernameOrQuery: userMatch ? userMatch[1] : undefined },
+      arguments: { operation: 'github_repos' },
       result: ghRepos
     });
+
+    const specificRepoMatch = userMessage.match(
+      /\b(RIz|serbtec|gauntlethub|ssbc|tpnewsite|lebara|vettrack|bino|CST|wadi-jeddah|ix|talemia|wbr|MCIT|ssp)\b/i
+    );
+    const targetRepoName = specificRepoMatch ? `yazeedx1/${specificRepoMatch[1]}` : 'yazeedx1/RIz';
+    const repoDetails = await executeTool('github_and_git_operations', {
+      operation: 'github_repo_details',
+      usernameOrQuery: targetRepoName
+    });
+    toolCalls.push({
+      name: 'github_and_git_operations',
+      arguments: { operation: 'github_repo_details', usernameOrQuery: targetRepoName },
+      result: repoDetails
+    });
+  }
+
+  // 3b. Antigravity IDE / Agent / Skills / Plugins queries
+  if (/\b(?:antigravity|agy|agent|ide|workspace|plugins?|skills?|mcp|brain)\b/i.test(userMessage)) {
+    thoughts.push('Inspecting live Google Antigravity IDE & Agent environment via antigravity_bridge.');
+    const agyRes = await executeTool('antigravity_bridge', { action: 'status' });
+    toolCalls.push({ name: 'antigravity_bridge', arguments: { action: 'status' }, result: agyRes });
   }
 
   // 4. Calendar creation intent
@@ -475,7 +506,7 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     `You are Riz, the personal AI assistant for ${ownerName}. ` +
     `Write a natural, concise, helpful conversational response directly to "${senderName}" on WhatsApp (1-3 sentences). ` +
     `NEVER use rigid template headers or fake data. Base your answer STRICTLY on the real tool execution results provided below. ` +
-    `Google Calendar IS LIVE AND CONNECTED to two accounts: yazeedx@gmail.com and yaz@thegauntlet.sa. Never claim Google Calendar needs sign-in.`;
+    `All of ${ownerName}'s core systems ARE LIVE AND CONNECTED: Google Calendar (yazeedx@gmail.com & yaz@thegauntlet.sa), Gmail (yazeedx@gmail.com & yaz@thegauntlet.sa via XOAUTH2), GitHub (yazeedx1/RIz and all 15 repositories), and Google Antigravity IDE Bridge.`;
 
   const userPrompt =
     (historyText ? `Recent chat history:\n${historyText}\n\n` : '') +
