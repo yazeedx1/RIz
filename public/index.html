@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Riz — Personal AI Assistant & WhatsApp Bridge</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-avatar">R</div>
+        <div>
+          <h1>Riz AI</h1>
+          <span class="status-pill" id="globalStatusPill">● Listening for "Riz"</span>
+        </div>
+      </div>
+
+      <nav class="nav-tabs">
+        <button class="nav-btn active" data-tab="whatsapp">
+          <span>💬</span> WhatsApp "Riz" Trigger
+        </button>
+        <button class="nav-btn" data-tab="accounts">
+          <span>🔗</span> Accounts & Apps
+        </button>
+        <button class="nav-btn" data-tab="workspace">
+          <span>📅</span> Calendar, Tasks & Mail
+        </button>
+        <button class="nav-btn" data-tab="chat">
+          <span>🤖</span> Direct Chat & Tools
+        </button>
+        <button class="nav-btn" data-tab="settings">
+          <span>⚙️</span> Brain & WhatsApp Setup
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="meta-label">Active Brain</div>
+        <div class="meta-value" id="sidebarModelBadge">gemini-3.8-flash</div>
+        <div class="meta-label" style="margin-top:8px;">Trigger Words</div>
+        <div class="meta-value" id="sidebarTriggersBadge">"Riz"</div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-area">
+      <!-- TAB 1: WHATSAPP TRIGGER SIMULATOR & LIVE LOG -->
+      <section class="tab-panel active" id="tab-whatsapp">
+        <header class="panel-header">
+          <div>
+            <h2>WhatsApp Auto-Reply Bridge (Trigger: <code>"Riz"</code>)</h2>
+            <p>Riz monitors incoming WhatsApp messages and only replies when someone calls its name <strong>"Riz"</strong>, automatically accessing your calendar, emails, notes, and apps.</p>
+          </div>
+          <div class="header-actions">
+            <a href="https://wa.me/" target="_blank" rel="noopener" class="btn btn-outline">Open WhatsApp App ↗</a>
+          </div>
+        </header>
+
+        <!-- Live WhatsApp App QR + 8-Digit Pairing Bar -->
+        <div class="card" style="margin-bottom: 18px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; border-color: rgba(37, 211, 102, 0.4);">
+          <div style="flex: 1; min-width: 280px;">
+            <h3 style="font-size: 15.5px; color: #86efac;">📲 Link Your Live WhatsApp App (Scan QR Code or Use 8-Digit Code)</h3>
+            <p style="font-size: 12.5px; color: var(--muted); margin-top: 2px;">
+              <strong>Option 1 (Easiest):</strong> Click <strong>Show QR Code</strong> and scan it from your phone in <strong>WhatsApp → Linked Devices → Link a Device</strong>.<br/>
+              <strong>Option 2 (8-Digit Code):</strong> Enter the exact WhatsApp number registered on your phone (e.g. <code>+9665XXXXXXXX</code>) and click <strong>Get 8-Digit Code</strong>.
+            </p>
+            <div id="waBridgeStatusBox" style="margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--text);">
+              Bridge Status: <span id="waBridgeStateLabel">Not linked yet</span>
+            </div>
+            <div id="waQrContainer" style="display: none; margin-top: 12px; background: #fff; padding: 12px; border-radius: 12px; width: fit-content;">
+              <img id="waQrImage" alt="WhatsApp QR Code" style="width: 210px; height: 210px; display: block;" />
+              <div style="color: #111; font-size: 11.5px; text-align: center; font-weight: 700; margin-top: 6px;">Scan in WhatsApp → Linked Devices</div>
+            </div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-end;">
+            <button type="button" id="waShowQrBtn" class="btn btn-primary" style="width: 100%; justify-content: center;">📷 Show QR Code to Scan</button>
+            <form id="waPairForm" style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="waPairPhoneInput" placeholder="+966 5XX XXX XXX" style="background: var(--panel-alt); border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 13.5px; width: 175px;" required />
+              <button type="submit" class="btn btn-wa">🔑 Get 8-Digit Code</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="wa-grid">
+          <!-- Left: Realistic WhatsApp Chat Simulator -->
+          <div class="card wa-phone-card">
+            <div class="wa-topbar">
+              <div class="wa-chat-info">
+                <div class="wa-avatar">👥</div>
+                <div>
+                  <div class="wa-chat-title" id="waSimChatTitle">Friends & Work Group</div>
+                  <div class="wa-chat-sub">Riz Auto-Responder Active • Trigger: "Riz"</div>
+                </div>
+              </div>
+              <select id="waChatTypeSelect" class="wa-select">
+                <option value="group">Group Chat</option>
+                <option value="dm">Direct Message (DM)</option>
+              </select>
+            </div>
+
+            <div class="wa-quick-prompts">
+              <span>Test Flow:</span>
+              <button class="chip" data-msg="Hey guys, are we still meeting later?">0. No "Riz" (Ignored)</button>
+              <button class="chip chip-highlight" data-msg="Hey Riz">1. Call "Hey Riz"</button>
+              <button class="chip chip-highlight" data-msg="blacky">2. Password: "blacky"</button>
+              <button class="chip chip-highlight" data-msg="When am I going to be available?">3. "When am I available?"</button>
+              <button class="chip chip-highlight" data-msg="Where am I right now?">4. "Where am I?"</button>
+              <button class="chip chip-highlight" data-msg="What is on my calendar and schedule?">5. "My schedule?"</button>
+              <button class="chip chip-highlight" data-msg="Tell me general information about me">6. "General info about me"</button>
+            </div>
+
+            <div class="wa-messages" id="waMessagesStream"></div>
+
+            <form id="waSimulateForm" class="wa-input-bar">
+              <input type="text" id="waSenderInput" class="wa-sender" value="Alex" title="Sender Name" placeholder="Sender" />
+              <input type="text" id="waMessageInput" class="wa-text-input" placeholder='Simulate incoming WhatsApp message (mention "Riz" to trigger reply)...' required />
+              <button type="submit" class="btn btn-wa">Send</button>
+            </form>
+          </div>
+
+          <!-- Right: Live Trigger & Tool Inspection Log -->
+          <div class="card wa-log-card">
+            <div class="card-title-row">
+              <h3>Live WhatsApp Trigger & Tool Execution Log</h3>
+              <span class="badge" id="waLogCountBadge">0 events</span>
+            </div>
+            <div id="waActivityLogList" class="log-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 2: CONNECTED ACCOUNTS & APPS -->
+      <section class="tab-panel" id="tab-accounts">
+        <header class="panel-header">
+          <div>
+            <h2>Connected Accounts & App Access</h2>
+            <p>Control which accounts and device applications Riz can read, search, and trigger when called on WhatsApp.</p>
+          </div>
+        </header>
+        <div class="accounts-grid" id="accountsGrid"></div>
+      </section>
+
+      <!-- TAB 3: CALENDAR, TASKS, NOTES & GMAIL -->
+      <section class="tab-panel" id="tab-workspace">
+        <header class="panel-header">
+          <div>
+            <h2>Riz Live Memory: Calendar, Tasks, Notes & Gmail</h2>
+            <p>Everything Riz schedules, remembers, or drafts from WhatsApp updates here in real time.</p>
+          </div>
+        </header>
+        <div class="workspace-grid">
+          <div class="card">
+            <h3>📅 Calendar Events</h3>
+            <div id="calendarList" class="item-list"></div>
+          </div>
+          <div class="card">
+            <h3>✅ Tasks & Reminders</h3>
+            <div id="tasksList" class="item-list"></div>
+          </div>
+          <div class="card">
+            <h3>📝 Saved Notes & Credentials</h3>
+            <div id="notesList" class="item-list"></div>
+          </div>
+          <div class="card">
+            <h3>✉️ Gmail Inbox & Outbox</h3>
+            <div id="emailsList" class="item-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 4: DIRECT CHAT WITH RIZ -->
+      <section class="tab-panel" id="tab-chat">
+        <header class="panel-header">
+          <div>
+            <h2>Direct Owner Chat with Riz</h2>
+            <p>Talk directly to Riz without needing a trigger word and inspect the Gemini Interactions API steps and tool calls.</p>
+          </div>
+        </header>
+        <div class="card direct-chat-card">
+          <div id="directChatStream" class="direct-chat-stream"></div>
+          <form id="directChatForm" class="direct-chat-form">
+            <input type="text" id="directChatInput" placeholder="Ask Riz to check your accounts, schedule an event, draft an email, or launch an app..." required />
+            <button type="submit" class="btn btn-primary">Ask Riz</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- TAB 5: SETTINGS & WHATSAPP CONNECTION -->
+      <section class="tab-panel" id="tab-settings">
+        <header class="panel-header">
+          <div>
+            <h2>Riz AI Brain, Password Gate & Owner Profile</h2>
+            <p>Configure your WhatsApp password (<code>blacky</code>), your live location ("where am I"), availability, and Gemini API key.</p>
+          </div>
+        </header>
+
+        <div class="settings-grid">
+          <form id="settingsForm" class="card settings-card">
+            <h3>1. Gemini Brain, Trigger & Password Gate</h3>
+
+            <label>Assistant Name</label>
+            <input type="text" id="cfgAssistantName" value="Riz" />
+
+            <label>WhatsApp Trigger Words (comma-separated)</label>
+            <input type="text" id="cfgTriggerWords" value="Riz, hey riz, @riz" />
+
+            <label>Unlock Password (after triggering "Riz")</label>
+            <input type="text" id="cfgAccessPassword" value="blacky" />
+
+            <label>Gemini Model (Interactions API)</label>
+            <select id="cfgModel">
+              <option value="gemini-3.8-flash">gemini-3.8-flash (Recommended Fast Agentic)</option>
+              <option value="gemini-4-argon">gemini-4-argon (Most Powerful Reasoning)</option>
+              <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (High-Throughput)</option>
+            </select>
+
+            <label>Gemini API Key (<code>GEMINI_API_KEY</code>)</label>
+            <input type="password" id="cfgGeminiApiKey" placeholder="AIzaSy... (Leave blank to keep existing or use Open Conversation Engine)" />
+            <small id="apiKeyStatusHint" class="hint"></small>
+
+            <label>System Persona Instruction</label>
+            <textarea id="cfgSystemInstruction" rows="3"></textarea>
+
+            <div class="checkbox-group">
+              <label><input type="checkbox" id="cfgWhatsappEnabled" checked /> Enable WhatsApp Auto-Reply</label>
+              <label><input type="checkbox" id="cfgReplyInGroups" checked /> Reply in Group Chats when "Riz" is called</label>
+              <label><input type="checkbox" id="cfgReplyInDMs" checked /> Reply in Direct Messages</label>
+              <label><input type="checkbox" id="cfgRequireTriggerInDMs" checked /> Require "Riz" trigger word before password prompt</label>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="margin-top:14px;">Save Configuration</button>
+            <span id="settingsSaveMsg" class="save-msg"></span>
+          </form>
+
+          <form id="ownerProfileForm" class="card settings-card">
+            <h3>2. My Live Profile ("Where am I", Availability & General Info)</h3>
+            <p style="font-size:12.5px;color:var(--muted);">Riz uses this information to answer questions in open conversation mode after someone enters <code>blacky</code>.</p>
+
+            <label>Your Name</label>
+            <input type="text" id="profName" placeholder="Your Name" />
+
+            <label>Current Location ("Where am I right now?")</label>
+            <input type="text" id="profLocation" placeholder="e.g. Riyadh, Saudi Arabia (Currently at Home Office)" />
+
+            <label>Current Status</label>
+            <input type="text" id="profStatus" placeholder="e.g. Active — Working on projects" />
+
+            <label>Working Hours & Timezone</label>
+            <input type="text" id="profWorkingHours" placeholder="e.g. 09:00 AM – 05:00 PM (Asia/Riyadh)" />
+
+            <label>Availability Summary ("When am I going to be available?")</label>
+            <textarea id="profAvailability" rows="2"></textarea>
+
+            <label>General Bio & Personal Information</label>
+            <textarea id="profBio" rows="3"></textarea>
+
+            <button type="submit" class="btn btn-primary" style="margin-top:14px;">Save My Profile Info</button>
+            <span id="profileSaveMsg" class="save-msg"></span>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

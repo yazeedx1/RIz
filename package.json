@@ -1,0 +1,26 @@
+{
+  "name": "riz-assistant",
+  "version": "1.0.0",
+  "description": "Riz Personal AI Assistant with WhatsApp name-trigger auto-reply, password gate ('blacky'), Gemini Interactions API tool calling, and multi-account/app connectors.",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node test/riz.test.js",
+    "whatsapp-bridge": "node src/whatsappWebBridge.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "pino": "^9.6.0"
+  },
+  "keywords": [
+    "ai-assistant",
+    "riz",
+    "whatsapp",
+    "gemini",
+    "interactions-api"
+  ],
+  "license": "MIT"
+}

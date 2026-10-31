@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: riz-ai-assistant
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: PORT
+        value: 3456
+      - key: WA_AUTH_DIR
+        value: /app/data/wa-auth
+      - key: GEMINI_API_KEY
+        sync: false
