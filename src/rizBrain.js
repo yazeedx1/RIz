@@ -442,15 +442,19 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
 
   // 3c. Netlify Cloud Hosting & Deployments queries
   if (/\b(?:netlify|deploys?|deployments?|hosting|sites?|domains?)\b/i.test(userMessage)) {
-    const createSiteMatch = userMessage.match(
-      /\b(?:create|make|new)\s+(?:a\s+)?(?:new\s+)?(?:netlify\s+)?site\s+(?:on\s+netlify\s+)?(?:called|named|for|:)?\s*['"]?([a-zA-Z0-9-]+)['"]?/i
-    );
-    const invalidSiteWords = new Set(['on', 'in', 'netlify', 'now', 'for', 'me', 'please', 'a', 'the']);
+    const createSiteMatch =
+      userMessage.match(
+        /\b(?:create|make|new|deploy)\s+(?:a\s+)?(?:new\s+)?(?:netlify\s+)?(?:site|project|app)\s+(?:on\s+netlify\s+|in\s+netlify\s+)?(?:called|named|for|:)?\s*['"]?([a-zA-Z0-9-]+)['"]?/i
+      ) ||
+      userMessage.match(
+        /\b(?:called|named)\s+['"]?([a-zA-Z0-9-]+)['"]?\s+(?:on|in)\s+netlify/i
+      );
+    const invalidSiteWords = new Set(['on', 'in', 'netlify', 'now', 'for', 'me', 'please', 'a', 'the', 'project', 'site']);
     const candidateSiteName =
       createSiteMatch && !invalidSiteWords.has(createSiteMatch[1].toLowerCase()) ? createSiteMatch[1] : null;
 
     if (candidateSiteName && !/^\s*(?:can|could|do|does|is|are)\b/i.test(userMessage)) {
-      thoughts.push(`Creating new Netlify site "${candidateSiteName}" via netlify_operations.`);
+      thoughts.push(`Creating new Netlify project/site "${candidateSiteName}" via netlify_operations.`);
       const nCreate = await executeTool('netlify_operations', {
         operation: 'create_site',
         siteNameOrId: candidateSiteName

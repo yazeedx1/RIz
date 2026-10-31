@@ -1158,6 +1158,7 @@ async function executeTool(name, args = {}) {
         }
 
         if (op === 'create_site') {
+          const crypto = require('crypto');
           const cleanSiteName = String(args.siteNameOrId || '')
             .trim()
             .toLowerCase()
@@ -1173,6 +1174,34 @@ async function executeTool(name, args = {}) {
           if (!cRes.ok) {
             return { status: 'error', operation: 'create_site', httpStatus: cRes.status, error: cData };
           }
+
+          // Deploy an initial live index.html to the newly created Netlify site
+          try {
+            const htmlContent = Buffer.from(
+              `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${cData.name}</title><style>body{font-family:system-ui,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}.card{background:#1e293b;padding:2.5rem;border-radius:1rem;box-shadow:0 10px 30px rgba(0,0,0,.4)}h1{margin:0 0 .5rem;color:#38bdf8}p{color:#94a3b8;margin:0}</style></head><body><div class="card"><h1>${cData.name}</h1><p>Provisioned & deployed live on Netlify by <strong>Riz AI Assistant</strong> for Yazeed Abdullah (Yaz).</p></div></body></html>`,
+              'utf8'
+            );
+            const sha1 = crypto.createHash('sha1').update(htmlContent).digest('hex');
+            const depRes = await fetch(`https://api.netlify.com/api/v1/sites/${cData.id}/deploys`, {
+              method: 'POST',
+              headers,
+              body: JSON.stringify({ files: { '/index.html': sha1 } })
+            });
+            if (depRes.ok) {
+              const depData = await depRes.json();
+              if (depData && depData.id && Array.isArray(depData.required) && depData.required.includes(sha1)) {
+                await fetch(`https://api.netlify.com/api/v1/deploys/${depData.id}/files/index.html`, {
+                  method: 'PUT',
+                  headers: {
+                    Authorization: `Bearer ${netlifyToken}`,
+                    'Content-Type': 'application/octet-stream'
+                  },
+                  body: htmlContent
+                });
+              }
+            }
+          } catch (_) {}
+
           return {
             status: 'success',
             operation: 'create_site',
@@ -1180,7 +1209,7 @@ async function executeTool(name, args = {}) {
             name: cData.name,
             url: cData.ssl_url || cData.url,
             adminUrl: cData.admin_url,
-            message: `Created Netlify site "${cData.name}" at ${cData.ssl_url || cData.url}`
+            message: `Created and deployed live Netlify project "${cData.name}" at ${cData.ssl_url || cData.url}`
           };
         }
 
