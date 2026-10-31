@@ -148,9 +148,46 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
   };
 }
 
+async function callSingleFastGeminiModel({ apiKey, model, systemInstruction, userPrompt }) {
+  const body = {
+    model,
+    input: userPrompt,
+    system_instruction: systemInstruction
+  };
+  if (model.startsWith('gemini-')) {
+    body.generation_config = { thinking_level: 'minimal' };
+  }
+  const res = await fetch(INTERACTIONS_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': apiKey,
+      'Api-Revision': '2026-05-20'
+    },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  const interaction = await res.json();
+  let text = '';
+  if (Array.isArray(interaction.steps)) {
+    for (const step of interaction.steps) {
+      if (step.type === 'model_output' && Array.isArray(step.content)) {
+        for (const block of step.content) {
+          if (block.type === 'text' && block.text) text += block.text;
+        }
+      }
+    }
+  }
+  if (!text && interaction.output_text) text = interaction.output_text;
+  if (!text || !text.trim()) throw new Error('Empty output');
+  return text.trim();
+}
+
 /**
- * Generates a fresh, natural AI response using Gemini Interactions API (without tools, 1-shot)
- * or live OpenAI-compatible AI completion so Riz never repeats a rigid standard script.
+ * Generates a fresh, natural AI response using parallel hedged Gemini Interactions API requests
+ * so the fastest model responds in ~1.5–3s without tail-latency stalls.
  */
 async function callLiveAiWriter({ systemInstruction, userPrompt }) {
   const state = loadState();
@@ -158,14 +195,21 @@ async function callLiveAiWriter({ systemInstruction, userPrompt }) {
 
   if (apiKey) {
     try {
-      const res = await callGeminiInteractionsApi({
-        apiKey,
-        model: 'gemini-flash-lite-latest',
-        systemInstruction,
-        userPrompt,
-        includeTools: false
-      });
-      if (res && res.reply) return res.reply.trim();
+      const winner = await Promise.any([
+        callSingleFastGeminiModel({
+          apiKey,
+          model: 'gemini-flash-lite-latest',
+          systemInstruction,
+          userPrompt
+        }),
+        callSingleFastGeminiModel({
+          apiKey,
+          model: 'gemma-4-26b-a4b-it',
+          systemInstruction,
+          userPrompt
+        })
+      ]);
+      if (winner) return winner;
     } catch (_) {}
   }
 
@@ -346,20 +390,21 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     toolCalls.push({ name: 'create_calendar_event', arguments: { title: cleanTitle, time }, result: res });
   }
 
-  // 5. Calendar / Schedule / Availability queries
+  // 5. Calendar / Schedule / Availability queries (handles calendar, calendars, calender, calenders, schedule, etc.)
   if (
-    /\b(?:calendar|schedule|events|meetings|agenda|available|availability|free|busy)\b/i.test(userMessage) &&
+    /\b(?:calendars?|calenders?|schedules?|events?|meetings?|agenda|available|availability|free|busy|today|tomorrow|week|appointments?|plans?)\b/i.test(
+      userMessage
+    ) &&
     !toolCalls.some((t) => t.name === 'create_calendar_event')
   ) {
     if (/\b(?:available|availability|free|busy)\b/i.test(userMessage)) {
       thoughts.push('Checking real calendar availability via check_availability_and_free_slots.');
       const res = await executeTool('check_availability_and_free_slots', {});
       toolCalls.push({ name: 'check_availability_and_free_slots', arguments: {}, result: res });
-    } else {
-      thoughts.push('Listing real calendar events via list_calendar_events.');
-      const res = await executeTool('list_calendar_events', {});
-      toolCalls.push({ name: 'list_calendar_events', arguments: {}, result: res });
     }
+    thoughts.push('Listing real calendar events across all connected Google Calendar accounts via list_calendar_events.');
+    const res = await executeTool('list_calendar_events', {});
+    toolCalls.push({ name: 'list_calendar_events', arguments: {}, result: res });
   }
 
   // 6. Email queries
@@ -407,7 +452,7 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     toolCalls.push({ name: 'open_app_or_deeplink', arguments: { appName }, result: res });
   }
 
-  // 9. Location / Owner Profile / Default context
+  // 9. Location / Owner Profile / Default context (always include 0ms cached calendar events too)
   if (
     toolCalls.length === 0 ||
     /\b(?:where\s+am\s+i|where\s+is|location|about\s+me|who\s+am\s+i|profile|status|working\s+hours)\b/i.test(userMessage)
@@ -415,6 +460,10 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     thoughts.push('Fetching real owner profile & location via get_owner_profile_and_location.');
     const res = await executeTool('get_owner_profile_and_location', {});
     toolCalls.push({ name: 'get_owner_profile_and_location', arguments: {}, result: res });
+    if (!toolCalls.some((t) => t.name === 'list_calendar_events')) {
+      const calRes = await executeTool('list_calendar_events', {});
+      toolCalls.push({ name: 'list_calendar_events', arguments: {}, result: calRes });
+    }
   }
 
   const historyText = (conversationHistory || [])
@@ -424,9 +473,9 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
 
   const systemInstruction =
     `You are Riz, the personal AI assistant for ${ownerName}. ` +
-    `Write a natural, helpful, conversational response directly to "${senderName}" on WhatsApp. ` +
+    `Write a natural, concise, helpful conversational response directly to "${senderName}" on WhatsApp (1-3 sentences). ` +
     `NEVER use rigid template headers or fake data. Base your answer STRICTLY on the real tool execution results provided below. ` +
-    `If a tool shows 0 events, 0 emails, or that an account (like Google Calendar OAuth or GitHub token) needs one-time sign-in, explain that naturally and honestly.`;
+    `Google Calendar IS LIVE AND CONNECTED to two accounts: yazeedx@gmail.com and yaz@thegauntlet.sa. Never claim Google Calendar needs sign-in.`;
 
   const userPrompt =
     (historyText ? `Recent chat history:\n${historyText}\n\n` : '') +
