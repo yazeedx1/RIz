@@ -277,7 +277,7 @@ function createServer() {
       }
 
       // Serve static files from public/
-      const safePath = pathname === '/' ? '/index.html' : pathname;
+      const safePath = pathname === '/' ? '/index.html' : pathname === '/call' ? '/call.html' : pathname;
       const filePath = path.join(PUBLIC_DIR, path.normalize(safePath));
       if (filePath.startsWith(PUBLIC_DIR) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
         const ext = path.extname(filePath);

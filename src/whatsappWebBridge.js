@@ -356,6 +356,32 @@ async function startLiveWhatsAppBridge({ phoneNumber = '', resetAuth = true } = 
     }
   });
 
+  // Handle incoming WhatsApp Voice/Video Call offers by replying with a live Voice Note + Call Room link
+  const handledCallIds = new Set();
+  sock.ev.on('call', async (calls) => {
+    if (sessionId !== currentSessionId) return;
+    for (const call of calls || []) {
+      if (!call || call.status !== 'offer' || !call.from) continue;
+      if (handledCallIds.has(call.id)) continue;
+      handledCallIds.add(call.id);
+
+      try {
+        const callerJid = call.from;
+        const callGreeting =
+          "Hey! It's Riz, Yazeed's AI assistant. Talk to me right here on WhatsApp by sending a Voice Note, or open http://localhost:3456/call for a live hands-free voice call!";
+        await sock.sendMessage(callerJid, { text: callGreeting });
+        const mp3Buffer = await synthesizeSpeechMp3(callGreeting);
+        if (mp3Buffer && mp3Buffer.length > 0) {
+          await sock.sendMessage(callerJid, {
+            audio: mp3Buffer,
+            mimetype: 'audio/mpeg',
+            ptt: true
+          });
+        }
+      } catch (_) {}
+    }
+  });
+
   return getBridgeStatus();
 }
 
