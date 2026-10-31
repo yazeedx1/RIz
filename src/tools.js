@@ -190,6 +190,26 @@ const TOOL_DECLARATIONS = [
   },
   {
     type: 'function',
+    name: 'netlify_operations',
+    description:
+      'Connects Riz to Netlify Cloud Hosting (https://api.netlify.com/api/v1): lists live Netlify sites & custom domains (list_sites), inspects site deployments (site_deploys), creates a new Netlify site (create_site), or checks the authenticated Netlify account (account_user).',
+    parameters: {
+      type: 'object',
+      properties: {
+        operation: {
+          type: 'string',
+          description: '"list_sites", "site_deploys", "create_site", or "account_user"'
+        },
+        siteNameOrId: {
+          type: 'string',
+          description: 'Optional Netlify site name, subdomain, or site ID'
+        }
+      },
+      required: ['operation']
+    }
+  },
+  {
+    type: 'function',
     name: 'list_tasks_and_notes',
     description: 'Retrieves the owner\'s real saved tasks, reminders, and notes.',
     parameters: {
@@ -1030,6 +1050,197 @@ async function executeTool(name, args = {}) {
         mcpServers,
         activeBrainConversationIds: brainConversations
       };
+    }
+
+    case 'netlify_operations': {
+      const op = String(args.operation || 'list_sites').toLowerCase();
+      const NETLIFY_CLIENT_ID = 'd6f37de6614df7ae58664cfca524744d73807a377f5ee71f1a254f78412e3750';
+      const tokenFile = path.join(__dirname, '..', 'data', 'netlify-token.json');
+      const ticketFile = path.join(__dirname, '..', 'data', 'netlify-pending-ticket.json');
+
+      let netlifyToken =
+        state.config.netlifyToken ||
+        process.env.NETLIFY_AUTH_TOKEN ||
+        dotEnv.NETLIFY_AUTH_TOKEN ||
+        '';
+
+      if (!netlifyToken && fs.existsSync(tokenFile)) {
+        try {
+          const saved = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
+          if (saved && saved.access_token) netlifyToken = saved.access_token;
+        } catch (_) {}
+      }
+
+      // If no token yet, check if a pending OAuth ticket was authorized and exchange it automatically!
+      if (!netlifyToken && fs.existsSync(ticketFile)) {
+        try {
+          const pending = JSON.parse(fs.readFileSync(ticketFile, 'utf8'));
+          if (pending && pending.id) {
+            const checkRes = await fetch(`https://api.netlify.com/api/v1/oauth/tickets/${pending.id}`);
+            if (checkRes.ok) {
+              const ticketStatus = await checkRes.json();
+              if (ticketStatus && ticketStatus.authorized) {
+                const exRes = await fetch(
+                  `https://api.netlify.com/api/v1/oauth/tickets/${pending.id}/exchange`,
+                  { method: 'POST' }
+                );
+                if (exRes.ok) {
+                  const exData = await exRes.json();
+                  if (exData && exData.access_token) {
+                    netlifyToken = exData.access_token;
+                    fs.writeFileSync(tokenFile, JSON.stringify(exData, null, 2), 'utf8');
+                    state.config.netlifyToken = netlifyToken;
+                    saveState(state);
+                  }
+                }
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
+      // If still no token, create or reuse a 1-click Netlify OAuth Ticket URL
+      if (!netlifyToken) {
+        try {
+          let ticketId = null;
+          if (fs.existsSync(ticketFile)) {
+            const pending = JSON.parse(fs.readFileSync(ticketFile, 'utf8'));
+            if (pending && pending.id && Date.now() - (pending.createdAtMs || 0) < 30 * 60 * 1000) {
+              ticketId = pending.id;
+            }
+          }
+          if (!ticketId) {
+            const tRes = await fetch(
+              `https://api.netlify.com/api/v1/oauth/tickets?client_id=${NETLIFY_CLIENT_ID}`,
+              { method: 'POST' }
+            );
+            if (tRes.ok) {
+              const tData = await tRes.json();
+              ticketId = tData.id;
+              fs.writeFileSync(
+                ticketFile,
+                JSON.stringify({ id: ticketId, createdAtMs: Date.now() }, null, 2),
+                'utf8'
+              );
+            }
+          }
+          const authorizeUrl = ticketId
+            ? `https://app.netlify.com/authorize?response_type=ticket&ticket=${ticketId}`
+            : 'https://app.netlify.com';
+          return {
+            status: 'needs_authorization',
+            netlifyConnected: false,
+            authorizeUrl,
+            message: `Netlify bridge is ready! Click this 1-click authorization link to approve Riz on your Netlify account: ${authorizeUrl}`
+          };
+        } catch (err) {
+          return {
+            status: 'error',
+            message: err.message
+          };
+        }
+      }
+
+      const headers = {
+        Authorization: `Bearer ${netlifyToken}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'Riz-AI-Assistant'
+      };
+
+      try {
+        if (op === 'account_user') {
+          const uRes = await fetch('https://api.netlify.com/api/v1/user', { headers });
+          const uData = await uRes.json();
+          return {
+            status: uRes.ok ? 'success' : 'error',
+            user: uData
+          };
+        }
+
+        if (op === 'create_site') {
+          const cleanSiteName = String(args.siteNameOrId || '')
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '-')
+            .replace(/^-+|-+$/g, '');
+          const body = cleanSiteName ? { name: cleanSiteName } : {};
+          const cRes = await fetch('https://api.netlify.com/api/v1/sites', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(body)
+          });
+          const cData = await cRes.json();
+          if (!cRes.ok) {
+            return { status: 'error', operation: 'create_site', httpStatus: cRes.status, error: cData };
+          }
+          return {
+            status: 'success',
+            operation: 'create_site',
+            siteId: cData.id,
+            name: cData.name,
+            url: cData.ssl_url || cData.url,
+            adminUrl: cData.admin_url,
+            message: `Created Netlify site "${cData.name}" at ${cData.ssl_url || cData.url}`
+          };
+        }
+
+        if (op === 'site_deploys') {
+          const sitesRes = await fetch('https://api.netlify.com/api/v1/sites?per_page=25', { headers });
+          const sites = await sitesRes.json();
+          const target = Array.isArray(sites)
+            ? sites.find(
+                (s) =>
+                  !args.siteNameOrId ||
+                  s.name.toLowerCase().includes(String(args.siteNameOrId).toLowerCase()) ||
+                  s.id === args.siteNameOrId
+              ) || sites[0]
+            : null;
+          if (!target) {
+            return { status: 'success', deploys: [], message: 'No Netlify sites found on this account.' };
+          }
+          const dRes = await fetch(`https://api.netlify.com/api/v1/sites/${target.id}/deploys?per_page=8`, {
+            headers
+          });
+          const deploys = await dRes.json();
+          return {
+            status: 'success',
+            site: target.name,
+            url: target.ssl_url || target.url,
+            deploys: (Array.isArray(deploys) ? deploys : []).map((d) => ({
+              id: d.id,
+              state: d.state,
+              branch: d.branch,
+              title: d.title,
+              deployUrl: d.deploy_ssl_url || d.deploy_url,
+              createdAt: d.created_at
+            }))
+          };
+        }
+
+        // Default: list_sites
+        const sRes = await fetch('https://api.netlify.com/api/v1/sites?per_page=30', { headers });
+        const sData = await sRes.json();
+        if (!sRes.ok) {
+          return { status: 'error', httpStatus: sRes.status, error: sData };
+        }
+        const sites = (Array.isArray(sData) ? sData : []).map((s) => ({
+          id: s.id,
+          name: s.name,
+          url: s.ssl_url || s.url,
+          customDomain: s.custom_domain || null,
+          adminUrl: s.admin_url,
+          repoUrl: s.build_settings && s.build_settings.repo_url,
+          updatedAt: s.updated_at
+        }));
+        return {
+          status: 'success',
+          netlifyConnected: true,
+          count: sites.length,
+          sites
+        };
+      } catch (err) {
+        return { status: 'error', message: err.message };
+      }
     }
 
     case 'list_tasks_and_notes': {

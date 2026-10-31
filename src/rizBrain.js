@@ -440,6 +440,37 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     }
   }
 
+  // 3c. Netlify Cloud Hosting & Deployments queries
+  if (/\b(?:netlify|deploys?|deployments?|hosting|sites?|domains?)\b/i.test(userMessage)) {
+    const createSiteMatch = userMessage.match(
+      /\b(?:create|make|new)\s+(?:a\s+)?(?:new\s+)?(?:netlify\s+)?site\s+(?:on\s+netlify\s+)?(?:called|named|for|:)?\s*['"]?([a-zA-Z0-9-]+)['"]?/i
+    );
+    const invalidSiteWords = new Set(['on', 'in', 'netlify', 'now', 'for', 'me', 'please', 'a', 'the']);
+    const candidateSiteName =
+      createSiteMatch && !invalidSiteWords.has(createSiteMatch[1].toLowerCase()) ? createSiteMatch[1] : null;
+
+    if (candidateSiteName && !/^\s*(?:can|could|do|does|is|are)\b/i.test(userMessage)) {
+      thoughts.push(`Creating new Netlify site "${candidateSiteName}" via netlify_operations.`);
+      const nCreate = await executeTool('netlify_operations', {
+        operation: 'create_site',
+        siteNameOrId: candidateSiteName
+      });
+      toolCalls.push({
+        name: 'netlify_operations',
+        arguments: { operation: 'create_site', siteNameOrId: candidateSiteName },
+        result: nCreate
+      });
+    } else {
+      thoughts.push('Querying live Netlify sites and deployments via netlify_operations.');
+      const nSites = await executeTool('netlify_operations', { operation: 'list_sites' });
+      toolCalls.push({ name: 'netlify_operations', arguments: { operation: 'list_sites' }, result: nSites });
+      if (/\b(?:deploys?|deployments?)\b/i.test(userMessage) && nSites && nSites.netlifyConnected) {
+        const nDeploys = await executeTool('netlify_operations', { operation: 'site_deploys' });
+        toolCalls.push({ name: 'netlify_operations', arguments: { operation: 'site_deploys' }, result: nDeploys });
+      }
+    }
+  }
+
   // 4. Calendar creation intent
   if (
     /\b(?:schedule\s+a|schedule\s+an|add\s+a|add\s+event|add\s+meeting|create\s+a|book\s+a|set\s+a\s+meeting)\b/i.test(

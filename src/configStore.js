@@ -46,6 +46,7 @@ const DEFAULT_STATE = {
     geminiApiKey: process.env.GEMINI_API_KEY || envVars.GEMINI_API_KEY || '',
     githubUsername: process.env.GITHUB_USERNAME || envVars.GITHUB_USERNAME || 'yazeedx1',
     githubToken: process.env.GITHUB_TOKEN || envVars.GITHUB_TOKEN || '',
+    netlifyToken: process.env.NETLIFY_AUTH_TOKEN || envVars.NETLIFY_AUTH_TOKEN || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || envVars.FIREBASE_PROJECT_ID || 'rizproject-e6d13',
     firebaseDatabaseUrl:
       process.env.FIREBASE_DATABASE_URL ||
@@ -61,7 +62,7 @@ const DEFAULT_STATE = {
     systemInstruction:
       'You are Riz, the personal AI assistant for Yazeed Abdullah (Yaz). ' +
       'Never use canned templates or fake data. Write every reply freshly and naturally in your own words. ' +
-      'Always use your real tools to inspect actual calendar events, real local code files, real Git/GitHub repositories, real emails, and real owner profile/location data. ' +
+      'Always use your real tools to inspect actual calendar events, real local code files, real Git/GitHub repositories, real Netlify deployments, real emails, and real owner profile/location data. ' +
       'If an external account has no events or needs authentication, state that honestly and concisely.'
   },
   ownerProfile: {
@@ -111,12 +112,12 @@ const DEFAULT_STATE = {
     },
     {
       id: 'codebase_and_git',
-      name: 'GitHub (yazeedx1/RIz + 15 Repos) & Codebase',
+      name: 'GitHub (yazeedx1/RIz + 22 Repos) & Codebase',
       category: 'Developer',
       icon: '🐙',
       connected: true,
       mode: 'Live GitHub REST API (yazeedx1) + Git CLI + Local Filesystem',
-      permissions: ['Access all 15 public/private repos', 'Read repo files & commits', 'Git commit & push to yazeedx1/RIz'],
+      permissions: ['Create new public/private repos', 'Access all 22 repos & commits', 'Git commit & push to yazeedx1/RIz'],
       deeplink: 'https://github.com/yazeedx1/RIz',
       tokenConfigured: true
     },
@@ -126,10 +127,21 @@ const DEFAULT_STATE = {
       category: 'AI & Agent Platform',
       icon: '🚀',
       connected: true,
-      mode: 'Bidirectional Antigravity Skill + Live API + Brain Bridge',
-      permissions: ['Inspect Antigravity workspace, skills & plugins', 'Read active brain conversations', 'Controllable from Antigravity agent'],
+      mode: 'Bidirectional Antigravity Skill + Project Scaffolding + Brain Bridge',
+      permissions: ['Create new Antigravity projects', 'Inspect workspace, skills & plugins', 'Controllable from Antigravity agent'],
       deeplink: 'http://localhost:3456',
       tokenConfigured: true
+    },
+    {
+      id: 'netlify',
+      name: 'Netlify Cloud Hosting & Deploys',
+      category: 'Cloud & Hosting',
+      icon: '🌐',
+      connected: true,
+      mode: 'Live Netlify REST API v1 + OAuth Ticket Bridge',
+      permissions: ['List live Netlify sites & custom domains', 'Inspect deploy status & logs', 'Create new sites & trigger deploys'],
+      deeplink: 'https://app.netlify.com',
+      tokenConfigured: Boolean(process.env.NETLIFY_AUTH_TOKEN || envVars.NETLIFY_AUTH_TOKEN)
     },
     {
       id: 'google_drive',
@@ -218,13 +230,20 @@ function loadState() {
     if (!mergedConfig.githubUsername && (process.env.GITHUB_USERNAME || latestEnv.GITHUB_USERNAME)) {
       mergedConfig.githubUsername = process.env.GITHUB_USERNAME || latestEnv.GITHUB_USERNAME;
     }
+    if (!mergedConfig.netlifyToken && (process.env.NETLIFY_AUTH_TOKEN || latestEnv.NETLIFY_AUTH_TOKEN)) {
+      mergedConfig.netlifyToken = process.env.NETLIFY_AUTH_TOKEN || latestEnv.NETLIFY_AUTH_TOKEN;
+    }
 
     return {
       ...DEFAULT_STATE,
       ...parsed,
       config: mergedConfig,
       ownerProfile: mergedOwner,
-      accounts: DEFAULT_STATE.accounts,
+      accounts: DEFAULT_STATE.accounts.map((acc) =>
+        acc.id === 'netlify'
+          ? { ...acc, tokenConfigured: Boolean(mergedConfig.netlifyToken) }
+          : acc
+      ),
       calendarEvents: cleanEvents,
       tasks: cleanTasks,
       notes: cleanNotes,

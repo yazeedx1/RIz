@@ -3,6 +3,8 @@ node_modules/
 data/wa-auth/
 data/gcal-homes/
 data/gmail-tokens/
+data/netlify-token.json
+data/netlify-pending-ticket.json
 data/riz-store.json
 npm-debug.log
 .DS_Store
