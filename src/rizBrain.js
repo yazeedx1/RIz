@@ -7,37 +7,40 @@ const INTERACTIONS_API_URL = 'https://generativelanguage.googleapis.com/v1beta/i
  * Calls the Gemini Interactions API (`v1beta/interactions`, `Api-Revision: 2026-05-20`)
  * with stateful multi-turn function calling (`previous_interaction_id` + `function_result` steps).
  */
-async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, userPrompt, previousInteractionId }) {
-  let input = userPrompt;
-  let previousId = previousInteractionId || undefined;
+async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, userPrompt }) {
+  const historySteps = [
+    {
+      type: 'user_input',
+      content: [{ type: 'text', text: String(userPrompt || '') }]
+    }
+  ];
   const collectedToolCalls = [];
   const collectedThoughts = [];
   let finalOutputText = '';
-  let lastInteractionId = previousId;
+  let lastInteractionId = null;
+  let activeModel = model || 'gemini-3.8-flash';
   let maxTurns = 5;
 
   while (maxTurns-- > 0) {
     const candidateModels = [
-      model || 'gemini-3.8-flash',
+      activeModel,
+      'gemini-3.8-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
       'gemini-flash-lite-latest',
       'gemma-4-26b-a4b-it'
     ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
 
     let interaction = null;
-    let activeModel = candidateModels[0];
     let lastErrorText = '';
 
     for (const candidate of candidateModels) {
-      activeModel = candidate;
       const body = {
         model: candidate,
-        input,
+        input: historySteps,
         system_instruction: systemInstruction,
         tools: TOOL_DECLARATIONS
       };
-      if (previousId) {
-        body.previous_interaction_id = previousId;
-      }
 
       const res = await fetch(INTERACTIONS_API_URL, {
         method: 'POST',
@@ -51,16 +54,14 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
 
       if (res.ok) {
         interaction = await res.json();
-        model = activeModel;
+        activeModel = candidate;
         break;
       }
 
       lastErrorText = await res.text();
-      if (res.status !== 503 && res.status !== 429) {
+      if (res.status !== 503 && res.status !== 429 && res.status !== 404) {
         break;
       }
-      // If 503/429 and previousId was tied to another model, clear previousId for fallback model
-      previousId = undefined;
     }
 
     if (!interaction) {
@@ -72,6 +73,7 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
     const functionResults = [];
 
     for (const step of steps) {
+      historySteps.push(step);
       if (step.type === 'thought' && Array.isArray(step.summary)) {
         for (const s of step.summary) {
           if (s.text) collectedThoughts.push(s.text);
@@ -85,12 +87,14 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
           arguments: args,
           result: toolResult
         });
-        functionResults.push({
+        const fnResStep = {
           type: 'function_result',
           name: step.name,
           call_id: step.id,
           result: [{ type: 'text', text: JSON.stringify(toolResult) }]
-        });
+        };
+        functionResults.push(fnResStep);
+        historySteps.push(fnResStep);
       } else if (step.type === 'model_output' && Array.isArray(step.content)) {
         for (const block of step.content) {
           if (block.type === 'text' && block.text) {
@@ -106,7 +110,7 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
 
     if (functionResults.length === 0) {
       return {
-        provider: `Gemini Interactions API (${model || 'gemini-3.8-flash'})`,
+        provider: `Gemini Interactions API (${activeModel})`,
         interactionId: lastInteractionId,
         reply: finalOutputText || 'Done!',
         thoughts: collectedThoughts,
@@ -114,13 +118,11 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
       };
     }
 
-    input = functionResults;
-    previousId = interaction.id;
     finalOutputText = '';
   }
 
   return {
-    provider: `Gemini Interactions API (${model || 'gemini-3.8-flash'})`,
+    provider: `Gemini Interactions API (${activeModel})`,
     interactionId: lastInteractionId,
     reply: finalOutputText || 'Completed requested tool actions.',
     thoughts: collectedThoughts,
