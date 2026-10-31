@@ -314,37 +314,56 @@ function fetchRealGoogleCalendarEvents(dateStr) {
     return { connected: false, events: [], authNote: 'gcalendar CLI script not found' };
   }
   try {
-    const cliArgs = ['readonly', 'events', '--max', '50', '--json'];
+    const cliArgs = ['readonly', 'events', '--max', '25', '--json'];
     if (dateStr) {
       cliArgs.push('--date', dateStr);
     }
     const stdout = execFileSync(GCALENDAR_SCRIPT, cliArgs, {
       encoding: 'utf8',
       timeout: 8000,
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        HOME: '/home/droid',
+        ANTIGRAVITY_APP_DATA_DIR: '/home/droid/.gemini/antigravity'
+      }
     });
     const parsed = JSON.parse(stdout);
     const items = Array.isArray(parsed) ? parsed : parsed.items || parsed.events || [];
-    const normalized = items.map((ev) => {
+    const seenRecurringTitles = new Set();
+    const normalized = [];
+
+    for (const ev of items) {
+      const title = ev.summary || ev.title || '(Untitled Event)';
+      if (!dateStr && seenRecurringTitles.has(title)) {
+        continue;
+      }
+      seenRecurringTitles.add(title);
+
       const startRaw = (ev.start && (ev.start.dateTime || ev.start.date)) || ev.startTime || '';
       const endRaw = (ev.end && (ev.end.dateTime || ev.end.date)) || ev.endTime || '';
       const datePart = startRaw ? String(startRaw).slice(0, 10) : dateStr || new Date().toISOString().slice(0, 10);
       const timePart =
-        startRaw && String(startRaw).includes('T') ? String(startRaw).slice(11, 16) : '09:00';
+        startRaw && String(startRaw).includes('T') ? String(startRaw).slice(11, 16) : 'All Day';
       const endTimePart =
-        endRaw && String(endRaw).includes('T') ? String(endRaw).slice(11, 16) : computeEndTime(timePart, 30);
-      return {
+        endRaw && String(endRaw).includes('T')
+          ? String(endRaw).slice(11, 16)
+          : timePart === 'All Day'
+          ? 'All Day'
+          : computeEndTime(timePart, 30);
+
+      normalized.push({
         id: ev.id || `gcal-${Math.random().toString(36).slice(2, 7)}`,
-        title: ev.summary || ev.title || '(Untitled Event)',
+        title,
         date: datePart,
         time: timePart,
         endTime: endTimePart,
         durationMinutes: 30,
         location: ev.location || ev.hangoutLink || 'Google Calendar',
-        source: 'Google Calendar (Live)'
-      };
-    });
-    return { connected: true, events: normalized, authNote: null };
+        source: 'Google Calendar (yazeedx@gmail.com)'
+      });
+    }
+    return { connected: true, account: 'yazeedx@gmail.com', events: normalized, authNote: null };
   } catch (err) {
     const stderr = String((err && err.stderr) || err.message || '');
     return {

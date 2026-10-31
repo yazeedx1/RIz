@@ -186,6 +186,13 @@ function loadState() {
     if (mergedOwner.name === 'Abdul (Owner)') {
       mergedOwner.name = 'Yazeed Abdullah (Yaz)';
     }
+    if (
+      mergedOwner.availabilitySummary &&
+      mergedOwner.availabilitySummary.includes('Free today before 2:00 PM')
+    ) {
+      mergedOwner.availabilitySummary =
+        'Connected to live Google Calendar (yazeedx@gmail.com).';
+    }
 
     const mergedConfig = {
       ...DEFAULT_STATE.config,
