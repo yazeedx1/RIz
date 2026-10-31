@@ -407,11 +407,37 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     });
   }
 
-  // 3b. Antigravity IDE / Agent / Skills / Plugins queries
+  // 3b. Antigravity IDE / Agent / Skills / Plugins / Project Creation queries
   if (/\b(?:antigravity|agy|agent|ide|workspace|plugins?|skills?|mcp|brain)\b/i.test(userMessage)) {
-    thoughts.push('Inspecting live Google Antigravity IDE & Agent environment via antigravity_bridge.');
-    const agyRes = await executeTool('antigravity_bridge', { action: 'status' });
-    toolCalls.push({ name: 'antigravity_bridge', arguments: { action: 'status' }, result: agyRes });
+    const createProjMatch =
+      userMessage.match(
+        /\b(?:create|make|scaffold|init|new)\s+(?:a\s+)?(?:new\s+)?(?:antigravity\s+)?(?:project|folder|workspace|app)\s+(?:on\s+antigravity\s+|in\s+antigravity\s+)?(?:called|named|for|:)?\s*['"]?([a-zA-Z0-9._-]+)['"]?/i
+      ) ||
+      userMessage.match(
+        /\b(?:called|named)\s+['"]?([a-zA-Z0-9._-]+)['"]?\s+(?:on|in)\s+antigravity/i
+      );
+    const invalidProjWords = new Set(['on', 'in', 'antigravity', 'agy', 'now', 'for', 'me', 'please', 'a', 'the', 'project']);
+    const candidateProjName = createProjMatch && !invalidProjWords.has(createProjMatch[1].toLowerCase())
+      ? createProjMatch[1]
+      : null;
+
+    if (candidateProjName && !/^\s*(?:can|could|do|does|is|are)\b/i.test(userMessage)) {
+      thoughts.push(`Creating new Antigravity project "${candidateProjName}" via antigravity_bridge.`);
+      const createProjRes = await executeTool('antigravity_bridge', {
+        action: 'create_project',
+        projectName: candidateProjName,
+        syncToGithub: /\bgithub\b/i.test(userMessage)
+      });
+      toolCalls.push({
+        name: 'antigravity_bridge',
+        arguments: { action: 'create_project', projectName: candidateProjName },
+        result: createProjRes
+      });
+    } else {
+      thoughts.push('Inspecting live Google Antigravity IDE & Agent environment via antigravity_bridge.');
+      const agyRes = await executeTool('antigravity_bridge', { action: 'status' });
+      toolCalls.push({ name: 'antigravity_bridge', arguments: { action: 'status' }, result: agyRes });
+    }
   }
 
   // 4. Calendar creation intent
@@ -532,7 +558,7 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     `You are Riz, the personal AI assistant for ${ownerName}. ` +
     `Write a natural, concise, helpful conversational response directly to "${senderName}" on WhatsApp (1-3 sentences). ` +
     `NEVER use rigid template headers or fake data. Base your answer STRICTLY on the real tool execution results provided below. ` +
-    `All of ${ownerName}'s core systems ARE LIVE AND CONNECTED: Google Calendar (yazeedx@gmail.com & yaz@thegauntlet.sa), Gmail (yazeedx@gmail.com & yaz@thegauntlet.sa via XOAUTH2), GitHub (yazeedx1/RIz, all 22 repositories, AND full permission to create new public or private GitHub repositories via github_create_repo and push commits via git_push), and Google Antigravity IDE Bridge.`;
+    `All of ${ownerName}'s core systems ARE LIVE AND CONNECTED: Google Calendar (yazeedx@gmail.com & yaz@thegauntlet.sa), Gmail (yazeedx@gmail.com & yaz@thegauntlet.sa via XOAUTH2), GitHub (yazeedx1/RIz, all 22 repositories, AND full permission to create new public or private GitHub repositories via github_create_repo and push commits via git_push), and Google Antigravity IDE Bridge (with full permission to create and scaffold new Antigravity workspace projects via antigravity_bridge:create_project).`;
 
   const userPrompt =
     (historyText ? `Recent chat history:\n${historyText}\n\n` : '') +

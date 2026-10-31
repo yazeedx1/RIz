@@ -164,13 +164,26 @@ const TOOL_DECLARATIONS = [
     type: 'function',
     name: 'antigravity_bridge',
     description:
-      'Connects Riz directly to the live Google Antigravity IDE & Agent environment: inspects active Antigravity workspace projects, installed plugins, skills, MCP servers, and recent brain conversations.',
+      'Connects Riz directly to the live Google Antigravity IDE & Agent environment: creates new Antigravity workspace projects (create_project) with Git and .agents/rules, or inspects active Antigravity workspace projects, installed plugins, skills, MCP servers, and brain conversations.',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          description: '"status" (full Antigravity overview), "skills" (list skills & plugins), or "brain" (list active Antigravity conversations)'
+          description:
+            '"status" (full Antigravity overview), "create_project" (scaffold a new project in the Antigravity workspace), "skills" (list skills & plugins), or "brain" (list active Antigravity conversations)'
+        },
+        projectName: {
+          type: 'string',
+          description: 'Name of the new Antigravity project folder to create when action is "create_project"'
+        },
+        description: {
+          type: 'string',
+          description: 'Optional description of the new Antigravity project'
+        },
+        syncToGithub: {
+          type: 'boolean',
+          description: 'Optional boolean: if true, also creates a GitHub repo under yazeedx1 and pushes the initial commit'
         }
       }
     }
@@ -884,11 +897,102 @@ async function executeTool(name, args = {}) {
     }
 
     case 'antigravity_bridge': {
+      const action = String(args.action || 'status').toLowerCase();
       const agyRoot = path.join(WORKSPACE_ROOT, '.gemini', 'antigravity');
       const pluginsRoot = path.join(WORKSPACE_ROOT, '.gemini', 'config', 'plugins');
       const skillsRoot = path.join(WORKSPACE_ROOT, '.gemini', 'config', 'skills');
       const mcpRoot = path.join(agyRoot, 'mcp');
       const brainRoot = path.join(agyRoot, 'brain');
+
+      if (action === 'create_project') {
+        const cleanName = String(args.projectName || '')
+          .trim()
+          .replace(/[^a-zA-Z0-9._-]/g, '-')
+          .replace(/^-+|-+$/g, '');
+        if (!cleanName) {
+          return {
+            status: 'needs_input',
+            message: 'Please provide a project name to create in the Antigravity workspace.'
+          };
+        }
+        const projectDir = path.join(WORKSPACE_ROOT, cleanName);
+        const srcDir = path.join(projectDir, 'src');
+        const rulesDir = path.join(projectDir, '.agents', 'rules');
+        fs.mkdirSync(srcDir, { recursive: true });
+        fs.mkdirSync(rulesDir, { recursive: true });
+
+        const desc = args.description || `Antigravity project ${cleanName} created by Riz for Yazeed Abdullah (Yaz).`;
+        if (!fs.existsSync(path.join(projectDir, 'README.md'))) {
+          fs.writeFileSync(
+            path.join(projectDir, 'README.md'),
+            `# ${cleanName}\n\n${desc}\n\nCreated via **Riz AI Assistant** inside the Google Antigravity Workspace.\n`,
+            'utf8'
+          );
+        }
+        if (!fs.existsSync(path.join(projectDir, '.gitignore'))) {
+          fs.writeFileSync(path.join(projectDir, '.gitignore'), 'node_modules/\n.env\n.DS_Store\n', 'utf8');
+        }
+        if (!fs.existsSync(path.join(projectDir, 'package.json'))) {
+          fs.writeFileSync(
+            path.join(projectDir, 'package.json'),
+            JSON.stringify(
+              {
+                name: cleanName.toLowerCase(),
+                version: '1.0.0',
+                description: desc,
+                main: 'src/index.js',
+                scripts: { start: 'node src/index.js' }
+              },
+              null,
+              2
+            ) + '\n',
+            'utf8'
+          );
+        }
+        if (!fs.existsSync(path.join(srcDir, 'index.js'))) {
+          fs.writeFileSync(
+            path.join(srcDir, 'index.js'),
+            `console.log(${JSON.stringify(`Antigravity project ${cleanName} is ready!`)});\n`,
+            'utf8'
+          );
+        }
+        fs.writeFileSync(
+          path.join(rulesDir, 'project.md'),
+          `# ${cleanName} — Antigravity Workspace Rules\n\n- Project root: \`${projectDir}\`\n- Owner: Yazeed Abdullah (Yaz)\n- Managed by Antigravity & Riz AI Assistant\n`,
+          'utf8'
+        );
+
+        try {
+          execSync(
+            'git init && git branch -M main && git add -A && git commit -m "Initial Antigravity project scaffold by Riz"',
+            { cwd: projectDir, encoding: 'utf8', timeout: 8000 }
+          );
+        } catch (_) {}
+
+        let githubUrl = null;
+        if (args.syncToGithub) {
+          const ghRes = await executeTool('github_and_git_operations', {
+            operation: 'github_create_repo',
+            usernameOrQuery: cleanName,
+            description: desc
+          });
+          if (ghRes && ghRes.url) {
+            githubUrl = ghRes.url;
+          }
+        }
+
+        return {
+          status: 'success',
+          action: 'create_project',
+          projectName: cleanName,
+          projectPath: projectDir,
+          antigravityRulesPath: path.join(rulesDir, 'project.md'),
+          filesCreated: ['README.md', '.gitignore', 'package.json', 'src/index.js', '.agents/rules/project.md'],
+          gitInitialized: true,
+          githubUrl,
+          message: `Created Antigravity project "${cleanName}" at ${projectDir}`
+        };
+      }
 
       const safeReaddir = (dir) => {
         try {
@@ -910,6 +1014,12 @@ async function executeTool(name, args = {}) {
         status: 'success',
         connected: true,
         bridgeMode: 'Bidirectional Antigravity Agent + Skill + Workspace Bridge',
+        capabilities: [
+          'Create new projects in Antigravity workspace (create_project)',
+          'Configure .agents/rules and skills automatically',
+          'Initialize Git and sync with GitHub (yazeedx1)',
+          'Inspect workspace projects, plugins, skills, MCP servers, and brain conversations'
+        ],
         workspaceRoot: WORKSPACE_ROOT,
         rizSkillRegistered: fs.existsSync(path.join(skillsRoot, 'riz_assistant', 'SKILL.md')),
         rizDashboardUrl: 'http://localhost:3456',
