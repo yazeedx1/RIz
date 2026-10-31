@@ -17,32 +17,56 @@ async function callGeminiInteractionsApi({ apiKey, model, systemInstruction, use
   let maxTurns = 5;
 
   while (maxTurns-- > 0) {
-    const body = {
-      model: model || 'gemini-3.8-flash',
-      input,
-      system_instruction: systemInstruction,
-      tools: TOOL_DECLARATIONS
-    };
-    if (previousId) {
-      body.previous_interaction_id = previousId;
+    const candidateModels = [
+      model || 'gemini-3.8-flash',
+      'gemini-flash-lite-latest',
+      'gemma-4-26b-a4b-it'
+    ].filter((m, idx, arr) => m && arr.indexOf(m) === idx);
+
+    let interaction = null;
+    let activeModel = candidateModels[0];
+    let lastErrorText = '';
+
+    for (const candidate of candidateModels) {
+      activeModel = candidate;
+      const body = {
+        model: candidate,
+        input,
+        system_instruction: systemInstruction,
+        tools: TOOL_DECLARATIONS
+      };
+      if (previousId) {
+        body.previous_interaction_id = previousId;
+      }
+
+      const res = await fetch(INTERACTIONS_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+          'Api-Revision': '2026-05-20'
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (res.ok) {
+        interaction = await res.json();
+        model = activeModel;
+        break;
+      }
+
+      lastErrorText = await res.text();
+      if (res.status !== 503 && res.status !== 429) {
+        break;
+      }
+      // If 503/429 and previousId was tied to another model, clear previousId for fallback model
+      previousId = undefined;
     }
 
-    const res = await fetch(INTERACTIONS_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey,
-        'Api-Revision': '2026-05-20'
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Gemini Interactions API HTTP ${res.status}: ${errText}`);
+    if (!interaction) {
+      throw new Error(`Gemini Interactions API error: ${lastErrorText}`);
     }
 
-    const interaction = await res.json();
     lastInteractionId = interaction.id;
     const steps = Array.isArray(interaction.steps) ? interaction.steps : [];
     const functionResults = [];

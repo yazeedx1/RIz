@@ -1,0 +1,13 @@
+[Unit]
+Description=Riz AI Assistant Wake Lock (Keep bot online when lid is closed / idle)
+After=riz-assistant.service
+Requires=riz-assistant.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/systemd-inhibit --what=idle:sleep:handle-lid-switch --who="Riz AI Assistant" --why="Keep WhatsApp assistant online 24/7 when lid is closed" /bin/sleep infinity
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

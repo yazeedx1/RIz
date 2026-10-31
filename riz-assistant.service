@@ -1,0 +1,18 @@
+[Unit]
+Description=Riz Personal AI Assistant (24/7 WhatsApp & Account Engine)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=droid
+Environment=HOME=/home/droid
+Environment=NODE_ENV=production
+Environment=PORT=3456
+Environment=WA_AUTH_DIR=/home/droid/.cache/projects/riz-assistant-c31f7611/wa-auth
+ExecStart=/usr/bin/node "/storage/emulated/10/Home screen/riz-assistant/src/server.js"
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
