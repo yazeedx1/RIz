@@ -131,18 +131,26 @@ const TOOL_DECLARATIONS = [
     type: 'function',
     name: 'github_and_git_operations',
     description:
-      'Executes real Git commands on local repositories (git_status, git_log, git_push) or queries the live GitHub REST API for the owner\'s repositories (github_repos), repository files/commits (github_repo_details), user profile (github_user), and search (github_search).',
+      'Executes real Git commands on local repositories (git_status, git_log, git_push) or queries/mutates the live GitHub REST API to create a new repository (github_create_repo), list repositories (github_repos), inspect repository files/commits (github_repo_details), get user profile (github_user), and search (github_search).',
     parameters: {
       type: 'object',
       properties: {
         operation: {
           type: 'string',
           description:
-            '"git_status", "git_log", "git_push", "github_repos", "github_repo_details", "github_user", or "github_search"'
+            '"git_status", "git_log", "git_push", "github_create_repo", "github_repos", "github_repo_details", "github_user", or "github_search"'
         },
         usernameOrQuery: {
           type: 'string',
-          description: 'GitHub username, repo name (e.g. "yazeedx1/RIz" or "serbtec"), or commit message'
+          description: 'New repo name (for github_create_repo), repo name (e.g. "yazeedx1/RIz"), or commit message'
+        },
+        description: {
+          type: 'string',
+          description: 'Optional repository description when creating a new GitHub repository'
+        },
+        isPrivate: {
+          type: 'boolean',
+          description: 'Optional boolean: true for private repository, false for public (default false)'
         },
         filePath: {
           type: 'string',
@@ -718,6 +726,52 @@ async function executeTool(name, args = {}) {
       }
 
       try {
+        if (op === 'github_create_repo') {
+          const rawName = String(args.usernameOrQuery || '')
+            .trim()
+            .replace(/^yazeedx1\//i, '')
+            .replace(/[^a-zA-Z0-9._-]/g, '-')
+            .replace(/^-+|-+$/g, '');
+          if (!rawName) {
+            return {
+              status: 'needs_input',
+              message: 'Please provide a repository name to create on GitHub.'
+            };
+          }
+          const createRes = await fetch('https://api.github.com/user/repos', {
+            method: 'POST',
+            headers: {
+              ...headers,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: rawName,
+              description: args.description || `Created by Riz AI Assistant for Yazeed Abdullah (Yaz)`,
+              private: Boolean(args.isPrivate),
+              auto_init: true
+            })
+          });
+          const created = await createRes.json();
+          if (!createRes.ok) {
+            return {
+              status: 'error',
+              operation: 'github_create_repo',
+              httpStatus: createRes.status,
+              error: created
+            };
+          }
+          return {
+            status: 'success',
+            operation: 'github_create_repo',
+            name: created.full_name,
+            private: created.private,
+            url: created.html_url,
+            cloneUrl: created.clone_url,
+            defaultBranch: created.default_branch,
+            message: `Successfully created GitHub repository ${created.full_name} (${created.html_url})`
+          };
+        }
+
         if (op === 'github_repos') {
           const url = ghToken
             ? 'https://api.github.com/user/repos?sort=updated&per_page=25'

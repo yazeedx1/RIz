@@ -339,14 +339,40 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     toolCalls.push({ name: 'list_workspace_files', arguments: {}, result: wsList });
   }
 
-  // 3. Git & GitHub queries (matches github, git, repo, repos, rip, repository, push, commits, or any of yazeedx1's repo names)
+  // 3. Git & GitHub queries (matches github, git, repo, repos, rep, rip, repository, push, commits, or any of yazeedx1's repo names)
   if (
-    /\b(?:github|git|repo|repos|rip|repository|repositories|commit|commits|branch|push|pull|serbtec|gauntlethub|ssbc|tpnewsite|lebara|vettrack|bino|cst|wadi-jeddah|talemia|wbr|mcit|ssp)\b/i.test(
+    /\b(?:github|git|repo|repos|rep|rip|repository|repositories|commit|commits|branch|push|pull|serbtec|gauntlethub|ssbc|tpnewsite|lebara|vettrack|bino|cst|wadi-jeddah|talemia|wbr|mcit|ssp)\b/i.test(
       userMessage
     )
   ) {
     thoughts.push('Running real Git and GitHub operations via github_and_git_operations.');
-    if (/\bpush\b/i.test(userMessage)) {
+
+    // Check if the user is asking to create a new repository with a specific name
+    const createRepoMatch =
+      userMessage.match(
+        /\b(?:create|make|init|initialize|new)\s+(?:a\s+)?(?:new\s+)?(?:private\s+|public\s+)?(?:github\s+)?(?:repo|rep|rip|repository)\s+(?:on\s+github\s+)?(?:called|named|for|:)?\s*['"]?([a-zA-Z0-9._-]+)['"]?/i
+      ) ||
+      userMessage.match(
+        /\b(?:called|named)\s+['"]?([a-zA-Z0-9._-]+)['"]?\s+(?:on\s+github|repo|rep|rip|repository)/i
+      );
+    const invalidRepoWords = new Set(['on', 'in', 'github', 'git', 'now', 'for', 'me', 'please', 'private', 'public', 'a', 'the']);
+    const candidateRepoName = createRepoMatch && !invalidRepoWords.has(createRepoMatch[1].toLowerCase())
+      ? createRepoMatch[1]
+      : null;
+
+    if (candidateRepoName && !/^\s*(?:can|could|do|does|is|are)\b/i.test(userMessage)) {
+      const isPrivate = /\bprivate\b/i.test(userMessage);
+      const createRes = await executeTool('github_and_git_operations', {
+        operation: 'github_create_repo',
+        usernameOrQuery: candidateRepoName,
+        isPrivate
+      });
+      toolCalls.push({
+        name: 'github_and_git_operations',
+        arguments: { operation: 'github_create_repo', usernameOrQuery: candidateRepoName, isPrivate },
+        result: createRes
+      });
+    } else if (/\bpush\b/i.test(userMessage) && !/^\s*(?:can|could|do|does)\b/i.test(userMessage)) {
       const pushRes = await executeTool('github_and_git_operations', {
         operation: 'git_push',
         usernameOrQuery: 'Riz live assistant sync via WhatsApp/Chat'
@@ -506,7 +532,7 @@ async function runRealToolAssistedAi(userMessage, senderName = 'User', conversat
     `You are Riz, the personal AI assistant for ${ownerName}. ` +
     `Write a natural, concise, helpful conversational response directly to "${senderName}" on WhatsApp (1-3 sentences). ` +
     `NEVER use rigid template headers or fake data. Base your answer STRICTLY on the real tool execution results provided below. ` +
-    `All of ${ownerName}'s core systems ARE LIVE AND CONNECTED: Google Calendar (yazeedx@gmail.com & yaz@thegauntlet.sa), Gmail (yazeedx@gmail.com & yaz@thegauntlet.sa via XOAUTH2), GitHub (yazeedx1/RIz and all 15 repositories), and Google Antigravity IDE Bridge.`;
+    `All of ${ownerName}'s core systems ARE LIVE AND CONNECTED: Google Calendar (yazeedx@gmail.com & yaz@thegauntlet.sa), Gmail (yazeedx@gmail.com & yaz@thegauntlet.sa via XOAUTH2), GitHub (yazeedx1/RIz, all 22 repositories, AND full permission to create new public or private GitHub repositories via github_create_repo and push commits via git_push), and Google Antigravity IDE Bridge.`;
 
   const userPrompt =
     (historyText ? `Recent chat history:\n${historyText}\n\n` : '') +
